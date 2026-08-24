@@ -1,0 +1,21 @@
+<svg width="140" height="85" viewBox="0 0 140 85" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="vayuLeafGradient" x1="10" y1="60" x2="80" y2="20" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#2c7d40" />
+      <stop offset="100%" stop-color="#3fa856" />
+    </linearGradient>
+    <linearGradient id="vayuBridgeGradient" x1="70" y1="30" x2="135" y2="60" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#3fa856" />
+      <stop offset="100%" stop-color="#3fa856" />
+    </linearGradient>
+  </defs>
+  <path d="M12 60C26 34 50 20 74 24C98 28 118 48 132 60" stroke="url(#vayuLeafGradient)" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M12 60C32 60 54 50 72 38" stroke="#2c7d40" stroke-width="4.5" stroke-linecap="round"/>
+  <path d="M30 48C38 43 46 45 54 50" stroke="#3fa856" stroke-width="3.5" stroke-linecap="round"/>
+  <path d="M44 36C52 31 60 33 68 40" stroke="#3fa856" stroke-width="3.5" stroke-linecap="round"/>
+  <path d="M22 55C28 52 34 53 40 56" stroke="#3fa856" stroke-width="3" stroke-linecap="round"/>
+  <path d="M74 60H132" stroke="url(#vayuBridgeGradient)" stroke-width="6" stroke-linecap="round"/>
+  <path d="M86 28V60" stroke="#2c7d40" stroke-width="4.5" stroke-linecap="round"/>
+  <path d="M102 36V60" stroke="#2c7d40" stroke-width="4.5" stroke-linecap="round"/>
+  <path d="M118 46V60" stroke="#2c7d40" stroke-width="4.5" stroke-linecap="round"/>
+</svg>

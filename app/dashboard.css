@@ -1,0 +1,495 @@
+/* ==========================================================================
+   Dashboard — same design language as the landing page.
+   Reuses the sv-* tokens; every selector here is svd- prefixed.
+   ========================================================================== */
+
+.svd {
+  padding-block: 40px 96px;
+  color: var(--sv-ink);
+}
+
+/* --------------------------------------------------------------------------
+   Header
+   -------------------------------------------------------------------------- */
+
+.svd-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 32px;
+  flex-wrap: wrap;
+  padding-bottom: 30px;
+  border-bottom: 1px solid var(--sv-line);
+}
+
+.svd-head h1 {
+  margin: 0;
+  font-size: clamp(1.9rem, 3.6vw, 2.7rem);
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  line-height: 1.04;
+}
+
+.svd-lede {
+  margin: 12px 0 0;
+  max-width: 58ch;
+  font-size: 0.9rem;
+  line-height: 1.65;
+  color: var(--sv-muted);
+}
+
+.svd-viewnav {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--sv-line);
+  border-radius: 999px;
+  background: var(--sv-bg-warm);
+}
+
+.svd-viewnav-item {
+  padding: 8px 18px;
+  border-radius: 999px;
+  font-size: 0.83rem;
+  font-weight: 500;
+  color: var(--sv-muted);
+  transition: background 0.22s, color 0.22s;
+}
+
+.svd-viewnav-item:hover {
+  color: var(--sv-ink);
+}
+
+.svd-viewnav-item.is-active {
+  background: var(--sv-green);
+  color: #fff;
+}
+
+.svd-alert {
+  margin: 22px 0 0;
+  padding: 12px 16px;
+  border: 1px solid #e3c3bd;
+  border-left: 3px solid #b4432c;
+  border-radius: 8px;
+  background: #fdf4f2;
+  font-size: 0.84rem;
+  color: #7d2f1d;
+}
+
+/* --------------------------------------------------------------------------
+   KPI strip
+   -------------------------------------------------------------------------- */
+
+.svd-kpis {
+  list-style: none;
+  margin: 30px 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 1px;
+  background: var(--sv-line);
+  border: 1px solid var(--sv-line);
+  border-radius: var(--sv-radius);
+  overflow: hidden;
+}
+
+.svd-kpi {
+  background: var(--sv-bg-warm);
+  padding: 22px 20px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.svd-kpi strong {
+  font-size: clamp(1.7rem, 2.8vw, 2.3rem);
+  font-weight: 700;
+  letter-spacing: -0.045em;
+  line-height: 1;
+}
+
+.svd-kpi span {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--sv-ink-soft);
+}
+
+.svd-kpi small {
+  font-size: 0.71rem;
+  line-height: 1.45;
+  color: var(--sv-muted);
+}
+
+/* --------------------------------------------------------------------------
+   Cards
+   -------------------------------------------------------------------------- */
+
+.svd-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 18px;
+  margin-top: 18px;
+}
+
+.svd-card {
+  background: var(--sv-bg-warm);
+  border: 1px solid var(--sv-line);
+  border-radius: var(--sv-radius);
+  padding: 24px 24px 26px;
+}
+
+.svd-card-wide {
+  grid-column: span 2;
+}
+
+.svd-card-full {
+  grid-column: 1 / -1;
+}
+
+/* Integration list reflows into columns when it spans the full width. */
+.svd-card-full .svd-sources {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 0 40px;
+}
+
+.svd-card-head {
+  margin-bottom: 20px;
+}
+
+.svd-card-head h2 {
+  margin: 0;
+  font-size: 0.98rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.svd-card-head p {
+  margin: 5px 0 0;
+  font-size: 0.76rem;
+  line-height: 1.5;
+  color: var(--sv-muted);
+}
+
+.svd-card-head-split {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+
+.svd-empty {
+  margin: 0;
+  padding: 22px 0;
+  font-size: 0.83rem;
+  color: var(--sv-muted);
+}
+
+.svd-note {
+  margin: 16px 0 0;
+  font-size: 0.72rem;
+  color: var(--sv-muted);
+}
+
+.svd-rule {
+  margin: 16px 0;
+  border: none;
+  border-top: 1px solid var(--sv-line);
+}
+
+/* Distribution bars ---------------------------------------------------------- */
+
+.svd-bars {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.svd-bars li {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr) 34px;
+  align-items: center;
+  gap: 12px;
+}
+
+.svd-bar-label {
+  font-size: 0.79rem;
+  color: var(--sv-ink-soft);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.svd-bar-track {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--sv-line-soft);
+  overflow: hidden;
+}
+
+.svd-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--sv-green);
+  transition: width 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.svd-hazard-fire { background: #c2410c; }
+.svd-hazard-smog { background: #6b7280; }
+.svd-hazard-dust { background: #b58316; }
+.svd-hazard-industrial { background: #7c3f9e; }
+.svd-hazard-particulate { background: #0f7c76; }
+
+.svd-bar-value {
+  font-size: 0.83rem;
+  font-weight: 600;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Split lists ---------------------------------------------------------------- */
+
+.svd-split,
+.svd-sources,
+.svd-readings {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+}
+
+.svd-split li,
+.svd-sources li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.82rem;
+}
+
+.svd-split-label {
+  flex: 1;
+  color: var(--sv-ink-soft);
+}
+
+.svd-split strong,
+.svd-sources strong {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.svd-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.svd-sev-critical { background: #b4432c; }
+.svd-sev-medium { background: #b58316; }
+.svd-sev-low { background: var(--sv-green); }
+
+/* Sensor readings ------------------------------------------------------------ */
+
+.svd-readings li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 9px;
+  border-bottom: 1px solid var(--sv-line-soft);
+  font-size: 0.82rem;
+  color: var(--sv-ink-soft);
+}
+
+.svd-readings li:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.svd-readings strong {
+  font-size: 1.02rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.svd-readings em {
+  margin-inline-start: 4px;
+  font-size: 0.68rem;
+  font-style: normal;
+  font-weight: 400;
+  color: var(--sv-muted);
+}
+
+/* Integration chips ---------------------------------------------------------- */
+
+.svd-sources li {
+  padding-bottom: 9px;
+  border-bottom: 1px solid var(--sv-line-soft);
+}
+
+.svd-sources li:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.svd-chip {
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--sv-line);
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--sv-muted);
+  background: #fff;
+  white-space: nowrap;
+}
+
+.svd-chip.is-ok {
+  border-color: var(--sv-line);
+  background: rgba(63, 168, 86, 0.08);
+  color: var(--sv-green-dark);
+}
+
+.svd-chip.is-off {
+  border-color: var(--sv-line);
+  background: #f4f5f0;
+  color: var(--sv-muted);
+}
+
+/* --------------------------------------------------------------------------
+   Queue table
+   -------------------------------------------------------------------------- */
+
+.svd-queue,
+.svd-map-card {
+  margin-top: 18px;
+}
+
+.svd-table-scroll {
+  overflow-x: auto;
+}
+
+.svd-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.83rem;
+}
+
+.svd-table th {
+  text-align: left;
+  padding: 0 14px 10px 0;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--sv-muted);
+  border-bottom: 1px solid var(--sv-line);
+  white-space: nowrap;
+}
+
+.svd-table td {
+  padding: 13px 14px 13px 0;
+  border-bottom: 1px solid var(--sv-line-soft);
+  vertical-align: middle;
+}
+
+.svd-table tr:last-child td {
+  border-bottom: none;
+}
+
+.svd-status {
+  text-transform: capitalize;
+  color: var(--sv-muted);
+}
+
+.svd-tag {
+  display: inline-block;
+  padding: 3px 9px;
+  border-radius: 5px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: #fff;
+  text-transform: capitalize;
+}
+
+.svd-action {
+  padding: 7px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--sv-line);
+  background: #fff;
+  font: inherit;
+  font-size: 0.76rem;
+  font-weight: 500;
+  color: var(--sv-ink-soft);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.2s, border-color 0.2s, color 0.2s;
+}
+
+.svd-action:hover:not(:disabled) {
+  background: var(--sv-green);
+  border-color: var(--sv-green);
+  color: #fff;
+}
+
+.svd-action:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* --------------------------------------------------------------------------
+   Map
+   -------------------------------------------------------------------------- */
+
+.svd-map {
+  height: 460px;
+  border: 1px solid var(--sv-line);
+  border-radius: 10px;
+  overflow: hidden;
+  background: #f1f3ec;
+}
+
+/* The map component sizes to its own container, so pin the height here. */
+.svd-map > *,
+.svd-map .map-shell,
+.svd-map .map-canvas {
+  height: 100%;
+  min-height: 0;
+}
+
+/* --------------------------------------------------------------------------
+   Responsive
+   -------------------------------------------------------------------------- */
+
+@media (max-width: 1180px) {
+  .svd-kpis {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .svd-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .svd-kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .svd-grid,
+  .svd-card-wide {
+    grid-template-columns: minmax(0, 1fr);
+    grid-column: auto;
+  }
+
+  .svd-bars li {
+    grid-template-columns: 88px minmax(0, 1fr) 30px;
+  }
+}
