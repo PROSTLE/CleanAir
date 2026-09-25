@@ -1,34 +1,42 @@
 rules_version = '2';
+
+// All writes go through server routes using the Admin SDK (which bypasses
+// these rules): /api/reports validates + rate-limits citizen reports,
+// classification and promotion run server-side, and operator actions require
+// a verified Firebase ID token (see lib/server/http.ts requireOperator).
+// Browsers therefore only ever READ public data here.
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    // Public: citizen reports (anonymous; contact details live elsewhere)
+    // and the incidents feed that drives the public map and dashboard.
     match /reports/{reportId} {
-      allow create: if true;
       allow read: if true;
-      allow update: if true;
-      allow delete: if false;
+      allow write: if false;
     }
 
     match /incidents/{incidentId} {
       allow read: if true;
-      allow write: if true;
-    }
-
-    match /hexcells/{cellId} {
-      allow read: if true;
-      allow write: if true;
-    }
-
-    match /alerts/{alertId} {
-      allow read: if true;
-      allow write: if true;
+      allow write: if false;
     }
 
     match /pollutionSnapshots/{snapshotId} {
       allow read: if true;
-      allow create: if true;
-      allow update: if false;
-      allow delete: if false;
+      allow write: if false;
+    }
+
+    // Server-only: reporter phone numbers, rate-limit counters, WhatsApp
+    // sessions, ambient-scan state, scheduler state. Default deny below
+    // covers them; listed for clarity.
+    match /reportContacts/{reportId} { allow read, write: if false; }
+    match /rateLimits/{key} { allow read, write: if false; }
+    match /whatsapp_sessions/{phone} { allow read, write: if false; }
+    match /ambientSensorBaselines/{cell} { allow read, write: if false; }
+    match /ambientDetectionState/{cell} { allow read, write: if false; }
+    match /system/{doc} { allow read, write: if false; }
+
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }
