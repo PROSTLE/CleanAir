@@ -8,7 +8,7 @@ export const DELHI_OPERATIONAL_BOUNDS = {
 // Simplified Delhi NCT administrative boundary. Coordinates are [lng, lat].
 // This keeps NCR neighbours such as Noida, Gurugram, Ghaziabad, and Faridabad
 // out of the operational feed while retaining Delhi's irregular boundary.
-const DELHI_NCT_BOUNDARY: ReadonlyArray<readonly [number, number]> = [
+export const DELHI_NCT_BOUNDARY: ReadonlyArray<readonly [number, number]> = [
   [76.8388351, 28.5732306], [76.8458603, 28.5500119], [76.8644469, 28.5436729],
   [76.8768675, 28.5249498], [76.8871384, 28.5203063], [76.8805219, 28.5055815],
   [76.8854384, 28.5013759], [76.8919497, 28.5008314], [76.9069036, 28.5137629],

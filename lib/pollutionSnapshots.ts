@@ -1,17 +1,16 @@
 import "server-only";
 
-import { addDoc, collection, serverTimestamp } from "firebase/firestore";
 import type { NearbyStationReading } from "@/lib/cpcbSensor";
 import type { SatelliteDataResult } from "@/lib/earthEngineSatellite";
-import { db, isFirebaseConfigured } from "@/lib/firebase";
-import { getH3CellId } from "@/lib/reportSubmissions";
+import { adminDb, adminServerTimestamp } from "@/lib/firebaseAdmin";
+import { getH3CellId } from "@/lib/geo";
 import type { WindData } from "@/lib/openWeather";
 
 export type PollutionSnapshotInput = {
   lat: number;
   lng: number;
   locationLabel?: string | null;
-  sourceContext: "report_classification" | "manual_poll";
+  sourceContext: "report_classification" | "manual_poll" | "scheduled_tick";
   reportId?: string | null;
   sensor: NearbyStationReading | null;
   satellite: SatelliteDataResult | null;
@@ -85,9 +84,6 @@ function serializeWind(wind: WindData | null) {
 
 export async function recordPollutionSnapshot(input: PollutionSnapshotInput) {
   try {
-    if (!isFirebaseConfigured || !db) {
-      return { id: null, stored: false, reason: "Firebase is not configured." };
-    }
     if (!Number.isFinite(input.lat) || !Number.isFinite(input.lng)) {
       return { id: null, stored: false, reason: "lat and lng must be valid numbers." };
     }
@@ -97,8 +93,10 @@ export async function recordPollutionSnapshot(input: PollutionSnapshotInput) {
       lat: String(input.lat),
       lng: String(input.lng),
     });
-    const docRef = await addDoc(collection(db, "pollutionSnapshots"), {
-      createdAt: serverTimestamp(),
+    // Admin SDK: the client can no longer write this collection (see
+    // firestore.rules), so snapshots can't be forged from a browser.
+    const docRef = await adminDb.collection("pollutionSnapshots").add({
+      createdAt: adminServerTimestamp(),
       h3CellId,
       location: {
         label: input.locationLabel ?? null,
