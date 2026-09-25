@@ -11,6 +11,18 @@
  *   5. 24-hour hourly forecast array with confidence degradation
  */
 
+import { latLngToCell } from "h3-js";
+
+// Delhi is UTC+5:30 with no DST. The diurnal profile below is in Delhi local
+// time, so hour-of-day must be computed in IST explicitly — Date#getHours()
+// uses the *server's* timezone, which on Cloud Run / App Hosting is UTC and
+// shifted every multiplier and every hour label by 5.5 hours.
+const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+
+export function getIstHour(date: Date): number {
+  return new Date(date.getTime() + IST_OFFSET_MS).getUTCHours();
+}
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface SensorReading {
@@ -41,7 +53,8 @@ export interface ForecastCell {
 }
 
 export interface HourlyForecastPoint {
-  hour: string; // e.g. "14:00"
+  hour: string; // e.g. "14:00" (IST)
+  time: string; // ISO-8601 instant this point forecasts
   predicted_pm25: number;
   confidence: "low" | "medium" | "high";
 }
@@ -50,6 +63,8 @@ export interface ForecastResult {
   h3CellId: string;
   location_label: string;
   generatedAt: string;
+  /** Timestamp of the newest reading the forecast was built from. */
+  historyEnd: string | null;
   currentPm25: number;
   peakPm25: number;
   peakHour: string;
@@ -150,7 +165,10 @@ function trendSlope(readings: number[]): number {
 
 // ─── Main forecast function ───────────────────────────────────────────────────
 
-export function forecastPM25(history: SensorReading[]): ForecastResult {
+export function forecastPM25(
+  history: SensorReading[],
+  options: { anchor?: Date } = {},
+): ForecastResult {
   // Sort oldest-first
   const sorted = [...history].sort(
     (a, b) => new Date(a.sampledAt).getTime() - new Date(b.sampledAt).getTime()
@@ -161,8 +179,11 @@ export function forecastPM25(history: SensorReading[]): ForecastResult {
     .map((r) => r.sensor_pm25)
     .filter((v): v is number => v !== null && Number.isFinite(v));
 
-  // Fallback if no data
-  const currentPm25 = pm25Series.length > 0 ? pm25Series[pm25Series.length - 1] : 85;
+  // No invented baseline: callers must supply real PM2.5 history.
+  if (pm25Series.length === 0) {
+    throw new Error("forecastPM25 needs at least one PM2.5 reading.");
+  }
+  const currentPm25 = pm25Series[pm25Series.length - 1];
   const pm25Window = pm25Series.slice(-72); // last 72 values
 
   // ── 1. WMA baseline ────────────────────────────────────────────────────────
@@ -198,14 +219,16 @@ export function forecastPM25(history: SensorReading[]): ForecastResult {
     windSpeed > WIND_DAMPING_THRESHOLD_KMH;
 
   // ── 5. Build 24-hour forecast ─────────────────────────────────────────────
-  const now = new Date();
+  // Hours are projected from `anchor` (default: now). Backtests anchor at the
+  // last training reading so predictions line up with held-out actuals.
+  const now = options.anchor ?? new Date();
   const forecast: HourlyForecastPoint[] = [];
   let peakPm25 = 0;
   let peakHour = "";
 
   for (let h = 1; h <= 24; h++) {
     const forecastTime = new Date(now.getTime() + h * 60 * 60 * 1000);
-    const hour = forecastTime.getHours();
+    const hour = getIstHour(forecastTime);
     const hourLabel = `${String(hour).padStart(2, "0")}:00`;
 
     // Blend WMA with trend projection
@@ -241,13 +264,13 @@ export function forecastPM25(history: SensorReading[]): ForecastResult {
 
     forecast.push({
       hour: hourLabel,
+      time: forecastTime.toISOString(),
       predicted_pm25: predicted,
       confidence: hoursToConfidence(h),
     });
   }
 
   // ── 6. Derive trend label ─────────────────────────────────────────────────
-  const slopeMagnitude = Math.abs(slope);
   const trendLabel: "rising" | "falling" | "stable" =
     slope > 1.5 ? "rising" : slope < -1.5 ? "falling" : "stable";
 
@@ -272,6 +295,7 @@ export function forecastPM25(history: SensorReading[]): ForecastResult {
     h3CellId,
     location_label,
     generatedAt: now.toISOString(),
+    historyEnd: lastReading?.sampledAt ?? null,
     currentPm25: Math.round(currentPm25),
     peakPm25,
     peakHour,
@@ -299,135 +323,131 @@ export interface AQIInfo {
 /**
  * CPCB (India) PM2.5 AQI breakpoints (µg/m³, 24-hour average).
  */
+// CPCB AQI band order (green → dark red), tuned to the VayuSetu palette.
 export function getAQIInfo(pm25: number): AQIInfo {
   if (pm25 <= 30) {
     return {
       category: "aqi_category_good",
-      color: "#22c55e",
-      bgColor: "rgba(34,197,94,0.12)",
-      textColor: "#15803d",
+      color: "#3a9d5d",
+      bgColor: "rgba(58,157,93,0.12)",
+      textColor: "#236b3c",
       description: "aqi_desc_good",
     };
   } else if (pm25 <= 60) {
     return {
       category: "aqi_category_satisfactory",
-      color: "#84cc16",
-      bgColor: "rgba(132,204,22,0.12)",
-      textColor: "#4d7c0f",
+      color: "#98b43a",
+      bgColor: "rgba(152,180,58,0.14)",
+      textColor: "#5c6f1f",
       description: "aqi_desc_satisfactory",
     };
   } else if (pm25 <= 90) {
     return {
       category: "aqi_category_moderate",
-      color: "#eab308",
-      bgColor: "rgba(234,179,8,0.12)",
-      textColor: "#a16207",
+      color: "#d4a72c",
+      bgColor: "rgba(212,167,44,0.14)",
+      textColor: "#7d6116",
       description: "aqi_desc_moderate",
     };
   } else if (pm25 <= 120) {
     return {
       category: "aqi_category_poor",
-      color: "#f97316",
-      bgColor: "rgba(249,115,22,0.12)",
-      textColor: "#c2410c",
+      color: "#d9772b",
+      bgColor: "rgba(217,119,43,0.13)",
+      textColor: "#9a4d14",
       description: "aqi_desc_poor",
     };
   } else if (pm25 <= 250) {
     return {
       category: "aqi_category_very_poor",
-      color: "#ef4444",
-      bgColor: "rgba(239,68,68,0.12)",
-      textColor: "#b91c1c",
+      color: "#c0392b",
+      bgColor: "rgba(192,57,43,0.12)",
+      textColor: "#8f2a1f",
       description: "aqi_desc_very_poor",
     };
   } else {
     return {
       category: "aqi_category_severe",
-      color: "#7c3aed",
-      bgColor: "rgba(124,58,237,0.12)",
-      textColor: "#6d28d9",
+      // CPCB's scale renders "Severe" in dark red (not purple).
+      color: "#8b1a1a",
+      bgColor: "rgba(139,26,26,0.12)",
+      textColor: "#7a1616",
       description: "aqi_desc_severe",
     };
   }
 }
 
-// ─── Mock history generator (for demo / when BigQuery unavailable) ──────────
+// ─── Forecast cells ─────────────────────────────────────────────────────────
+// H3 IDs are derived from each cell's coordinates at the app-wide resolution
+// (8, same as reportSubmissions.ts and ml/data-prep.py). The IDs used to be
+// hardcoded strings that decoded to hexagons in New York (one wasn't a valid
+// cell at all), so the BigQuery h3CellId match could never hit.
+// `bigQueryLabel` is the CPCB station whose history backs the forecast; it is
+// shown in the UI so a zone isn't presented as having its own monitor.
+const FORECAST_H3_RESOLUTION = 8;
 
-/**
- * Generates realistic mock sensor readings for a given h3CellId
- * using a seeded pseudo-random walk anchored to Delhi baseline values.
- */
-export function generateMockHistory(
-  h3CellId: string,
-  locationLabel: string,
-  lat: number,
-  lng: number,
-  hoursBack = 72
-): SensorReading[] {
-  // Simple hash seed from h3CellId
-  let seed = 0;
-  for (let i = 0; i < h3CellId.length; i++) {
-    seed = (seed * 31 + h3CellId.charCodeAt(i)) >>> 0;
-  }
+const FORECAST_CELL_SEEDS: Array<Omit<ForecastCell, "h3CellId">> = [
+  { labelKey: "cell_anand_vihar", label: "Anand Vihar", bigQueryLabel: "Anand Vihar, Delhi - DPCC", lat: 28.6469, lng: 77.3152 },
+  { labelKey: "cell_ito_crossing", label: "ITO Crossing", bigQueryLabel: "ITO, Delhi - CPCB", lat: 28.6292, lng: 77.2410 },
+  { labelKey: "cell_ghazipur_landfill", label: "Ghazipur Landfill", bigQueryLabel: "Patparganj, Delhi - DPCC", lat: 28.6264, lng: 77.3192 },
+  { labelKey: "cell_bawana_industrial", label: "Bawana Industrial", bigQueryLabel: "Bawana, Delhi - DPCC", lat: 28.8039, lng: 77.0469 },
+  { labelKey: "cell_dwarka_sector_21", label: "Dwarka Sector 21", bigQueryLabel: "NSIT Dwarka, Delhi - CPCB", lat: 28.5859, lng: 77.0718 },
+  { labelKey: "cell_bhalswa_landfill", label: "Bhalswa Landfill", bigQueryLabel: "Jahangirpuri, Delhi - DPCC", lat: 28.7427, lng: 77.1636 },
+  { labelKey: "cell_connaught_place", label: "Connaught Place", bigQueryLabel: "Mandir Marg, Delhi - DPCC", lat: 28.6315, lng: 77.2167 },
+  { labelKey: "cell_rohini_sector_8", label: "Rohini Sector 8", bigQueryLabel: "Rohini, Delhi - DPCC", lat: 28.7495, lng: 77.1100 },
+];
 
-  function seededRand() {
-    seed = (seed * 1664525 + 1013904223) >>> 0;
-    return seed / 0xffffffff;
-  }
+export const DELHI_H3_CELLS: ForecastCell[] = FORECAST_CELL_SEEDS.map((cell) => ({
+  ...cell,
+  h3CellId: latLngToCell(cell.lat, cell.lng, FORECAST_H3_RESOLUTION),
+}));
 
-  const now = Date.now();
-  const readings: SensorReading[] = [];
+// ─── Backtest ─────────────────────────────────────────────────────────────────
 
-  // Start from a plausible baseline for this cell (80–200 µg/m³)
-  let pm25 = 60 + seededRand() * 140;
-  let pm10 = pm25 * (1.6 + seededRand() * 0.4);
-  let no2 = 20 + seededRand() * 60;
-
-  for (let h = hoursBack; h >= 0; h--) {
-    const ts = new Date(now - h * 60 * 60 * 1000);
-    const hour = ts.getHours();
-
-    // Apply diurnal pattern for mock too
-    const diurnal = DIURNAL_MULTIPLIERS[hour];
-
-    // Random walk with diurnal modulation
-    const delta = (seededRand() - 0.48) * 12;
-    pm25 = Math.max(10, Math.min(400, pm25 + delta));
-    const diurnalPm25 = Math.max(10, 30 + (pm25 - 30) * diurnal);
-
-    pm10 = Math.max(20, diurnalPm25 * (1.5 + seededRand() * 0.3));
-    no2 = Math.max(5, 20 + seededRand() * 60);
-
-    readings.push({
-      sampledAt: ts.toISOString(),
-      h3CellId,
-      location_label: locationLabel,
-      location_lat: lat,
-      location_lng: lng,
-      sensor_pm25: parseFloat(diurnalPm25.toFixed(1)),
-      sensor_pm10: parseFloat(pm10.toFixed(1)),
-      sensor_no2: parseFloat(no2.toFixed(1)),
-      sensor_so2: parseFloat((2 + seededRand() * 12).toFixed(1)),
-      sensor_co: parseFloat((0.3 + seededRand() * 1.2).toFixed(2)),
-      sensor_nh3: parseFloat((1 + seededRand() * 8).toFixed(1)),
-      sensor_ozone: parseFloat((20 + seededRand() * 40).toFixed(1)),
-      wind_speed_kmh: parseFloat((3 + seededRand() * 22).toFixed(1)),
-      wind_dir_deg: parseFloat((seededRand() * 360).toFixed(0)),
-    });
-  }
-
-  return readings;
+export interface BacktestResult {
+  /** Mean absolute error of this engine on held-out readings (µg/m³). */
+  maeHeuristic: number;
+  /** Same error for naive persistence ("next hours = last value"). */
+  maePersistence: number;
+  evaluatedPoints: number;
+  holdoutHours: number;
 }
 
-// ─── Known Delhi H3 cells (resolution 7) for demo ────────────────────────────
+/**
+ * Honest accuracy check on real data: forecast from all but the last
+ * `holdoutHours` readings, compare against what was actually measured, and
+ * report it next to a persistence baseline so the number means something.
+ */
+export function backtestHeuristic(history: SensorReading[], holdoutHours = 12): BacktestResult | null {
+  const sorted = [...history]
+    .filter((reading) => reading.sensor_pm25 !== null && Number.isFinite(reading.sensor_pm25))
+    .sort((a, b) => Date.parse(a.sampledAt) - Date.parse(b.sampledAt));
+  if (sorted.length < holdoutHours + 24) return null;
 
-export const DELHI_H3_CELLS: ForecastCell[] = [
-  { h3CellId: "872a100edffffff", labelKey: "cell_anand_vihar", label: "Anand Vihar", bigQueryLabel: "Anand Vihar, Delhi - DPCC", lat: 28.6469, lng: 77.3152 },
-  { h3CellId: "872a1072dffffff", labelKey: "cell_ito_crossing", label: "ITO Crossing", bigQueryLabel: "ITO, Delhi - CPCB", lat: 28.6292, lng: 77.2410 },
-  { h3CellId: "872a1014dffffff", labelKey: "cell_ghazipur_landfill", label: "Patparganj, Delhi - DPCC", lat: 28.6264, lng: 77.3192 },
-  { h3CellId: "872a1073dffffff", labelKey: "cell_bawana_industrial", label: "Bawana Industrial", bigQueryLabel: "Bawana, Delhi - DPCC", lat: 28.8039, lng: 77.0469 },
-  { h3CellId: "872a1071dffffff", labelKey: "cell_dwarka_sector_21", label: "Dwarka Sector 21", bigQueryLabel: "NSIT Dwarka, Delhi - CPCB", lat: 28.5859, lng: 77.0718 },
-  { h3CellId: "872a1078dffffff", labelKey: "cell_bhalswa_landfill", label: "Bhalswa Landfill", bigQueryLabel: "Jahangirpuri, Delhi - DPCC", lat: 28.7427, lng: 77.1636 },
-  { h3CellId: "872a100cdffffff", labelKey: "cell_connaught_place", label: "Connaught Place", bigQueryLabel: "Mandir Marg, Delhi - DPCC", lat: 28.6315, lng: 77.2167 },
-  { h3CellId: "872a107adffffff", labelKey: "cell_rohini_sector_8", label: "Rohini Sector 8", bigQueryLabel: "Rohini, Delhi - DPCC", lat: 28.7495, lng: 77.1100 },
-];
+  const train = sorted.slice(0, -holdoutHours);
+  const test = sorted.slice(-holdoutHours);
+  const anchorMs = Date.parse(train[train.length - 1].sampledAt);
+  if (!Number.isFinite(anchorMs)) return null;
+
+  const result = forecastPM25(train, { anchor: new Date(anchorMs) });
+  const persistenceValue = train[train.length - 1].sensor_pm25 as number;
+  const heuristicErrors: number[] = [];
+  const persistenceErrors: number[] = [];
+
+  for (const actual of test) {
+    const actualMs = Date.parse(actual.sampledAt);
+    const point = result.forecast.find((candidate) => Math.abs(Date.parse(candidate.time) - actualMs) <= 30 * 60 * 1000);
+    if (!point || actual.sensor_pm25 === null) continue;
+    heuristicErrors.push(Math.abs(point.predicted_pm25 - actual.sensor_pm25));
+    persistenceErrors.push(Math.abs(persistenceValue - actual.sensor_pm25));
+  }
+  if (heuristicErrors.length === 0) return null;
+
+  const mean = (values: number[]) => values.reduce((sum, value) => sum + value, 0) / values.length;
+  return {
+    maeHeuristic: Number(mean(heuristicErrors).toFixed(1)),
+    maePersistence: Number(mean(persistenceErrors).toFixed(1)),
+    evaluatedPoints: heuristicErrors.length,
+    holdoutHours,
+  };
+}
