@@ -6,6 +6,7 @@ import { fetchAllStationReadings, getNearestStationReading, getPrimaryPollutant 
 import type { SatelliteDataResult } from "@/lib/earthEngineSatellite";
 import { getSatelliteDataForPoint } from "@/lib/earthEngineSatellite";
 import { computeFusionConfidence, satelliteWeightToScore, sensorDeltaToScore } from "@/lib/fusionConfidence";
+import { MONITORED_CELLS } from "@/lib/mapConstants";
 import { isInOperationalRegion } from "@/lib/operationalRegion";
 import { getH3CellId, getSeverity } from "@/lib/geo";
 import {
@@ -132,21 +133,6 @@ export function checkSatelliteSupport(
   return { supported: hazardWeight >= SATELLITE_SUPPORT_SCORE, hazardWeight };
 }
 
-// Extra known NCR pollution-prone zones. The primary ambient scan now walks
-// every available CPCB station; this list only fills satellite-only gaps in
-// places where there is no station cell.
-export const MONITORED_CELLS: Array<{ label: string; lat: number; lng: number }> = [
-  { label: "Anand Vihar", lat: 28.6469, lng: 77.3152 },
-  { label: "Wazirpur Industrial Area", lat: 28.7041, lng: 77.1653 },
-  { label: "ITO Crossing", lat: 28.6292, lng: 77.241 },
-  { label: "Mundka", lat: 28.6822, lng: 77.031 },
-  { label: "Okhla Industrial Area", lat: 28.5355, lng: 77.291 },
-  { label: "RK Puram", lat: 28.5651, lng: 77.1815 },
-  { label: "Rohini", lat: 28.7346, lng: 77.1177 },
-  { label: "Naraina Industrial Area", lat: 28.6285, lng: 77.1409 },
-  { label: "Ghazipur Landfill", lat: 28.6264, lng: 77.3192 },
-  { label: "Bawana Industrial Area", lat: 28.8039, lng: 77.0469 },
-];
 
 // Ambient (sensor/satellite-only, zero citizen reports) detection can only
 // test 3 real, independent hypotheses — not 4. "fire" and "smog" both
@@ -520,6 +506,8 @@ async function getAmbientScanTargets(): Promise<AmbientScanTarget[]> {
     }
   }
 
+  // Extra known pollution-prone zones: these only fill satellite-only gaps in
+  // places where there is no station cell.
   for (const cell of MONITORED_CELLS) {
     if (!isInOperationalRegion(cell.lat, cell.lng)) continue;
     const h3CellId = getH3CellId({

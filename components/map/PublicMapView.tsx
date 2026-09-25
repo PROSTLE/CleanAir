@@ -30,6 +30,7 @@ export default function PublicMapView() {
 
   return (
     <GoogleHotspotMap
+      enable3d
       fires={showFires && fires ? fires : undefined}
       headerControls={
         <div className="map-layer-bar">

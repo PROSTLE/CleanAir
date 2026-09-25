@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import dynamic from "next/dynamic";
 import { collection, limit, onSnapshot, orderBy, query } from "firebase/firestore";
 import { formatStatus } from "@/components/command/commandData";
 import { latLngToCell } from "h3-js";
@@ -24,6 +25,23 @@ import { useT } from "@/lib/languageContext";
 import DelhiIllustration from "@/components/shared/DelhiIllustration";
 import Icon, { HAZARD_ICON } from "@/components/shared/Icon";
 import LiveIndicator from "@/components/shared/LiveIndicator";
+import type { Map3DPoint } from "@/components/map/Delhi3DMap";
+
+function Map3DLoading() {
+  const t = useT();
+  return (
+    <div className="google-map-state">
+      <strong>{t("map3d_loading_title")}</strong>
+      <span>{t("map3d_loading_desc")}</span>
+    </div>
+  );
+}
+
+// MapLibre (~250 kB gzipped) is only downloaded the first time someone opens the 3D view.
+const Delhi3DMap = dynamic(() => import("@/components/map/Delhi3DMap"), {
+  ssr: false,
+  loading: Map3DLoading,
+});
 
 declare global {
   interface Window {
@@ -64,6 +82,8 @@ function getServerCompactMapViewportSnapshot() {
 export type FireMarker = { lat: number; lng: number; brightnessK: number | null };
 
 type GoogleHotspotMapProps = {
+  /** Offer a 2D / 3D switch over the map panel. */
+  enable3d?: boolean;
   fires?: FireMarker[];
   /** Extra controls rendered in the public header's status card (e.g. layer toggles). */
   headerControls?: React.ReactNode;
@@ -231,6 +251,7 @@ export default function GoogleHotspotMap({
   showSidebar = true,
   fires,
   headerControls,
+  enable3d = false,
 }: GoogleHotspotMapProps = {}) {
   const t = useT();
   const isCompactMapViewport = useSyncExternalStore(
@@ -255,6 +276,9 @@ export default function GoogleHotspotMap({
     hasApiKey ? "loading" : "error",
   );
   const isControlled = controlledIncidents !== undefined;
+  const [view, setView] = useState<"2d" | "3d">("2d");
+  // Keep the 3D map mounted after its first open so switching back is instant.
+  const [has3dOpened, setHas3dOpened] = useState(false);
 
   useEffect(() => {
     if (isControlled) return;
@@ -349,6 +373,24 @@ export default function GoogleHotspotMap({
 
     return Array.from(groupMap.values());
   }, [incidents]);
+
+  const points3d = useMemo<Map3DPoint[]>(
+    () =>
+      clusters.map((cluster) => {
+        const primaryIncident = cluster.promotedIncident ?? cluster.incidents[0];
+        return {
+          id: primaryIncident.id,
+          lat: cluster.latitude,
+          lng: cluster.longitude,
+          label: primaryIncident.neighborhood,
+          detail: `${t("hazard_" + primaryIncident.hazardType) || primaryIncident.hazardType} · ${
+            primaryIncident.evidence?.alertTier ? t("map_alert_tier") : t("map_public_signal")
+          }`,
+          color: hazardColor[primaryIncident.hazardType] ?? severityColor[primaryIncident.severity],
+        };
+      }),
+    [clusters, t],
+  );
 
   const selectedId = controlledSelectedIncidentId ?? selectedIdInternal;
 
@@ -685,6 +727,31 @@ export default function GoogleHotspotMap({
               <span>
                 {status === "error" ? t("map_unavailable_desc") : t("map_loading_desc")}
               </span>
+            </div>
+          )}
+          {enable3d && has3dOpened && (
+            <Delhi3DMap
+              points={points3d}
+              selectedId={selectedId}
+              onSelect={selectIncident}
+              visible={view === "3d"}
+            />
+          )}
+          {enable3d && (
+            <div className="map-view-switch" role="group" aria-label={t("map3d_switch_label")}>
+              {(["2d", "3d"] as const).map((option) => (
+                <button
+                  key={option}
+                  type="button"
+                  aria-pressed={view === option}
+                  onClick={() => {
+                    setView(option);
+                    if (option === "3d") setHas3dOpened(true);
+                  }}
+                >
+                  {t(option === "2d" ? "map3d_view_2d" : "map3d_view_3d")}
+                </button>
+              ))}
             </div>
           )}
         </div>

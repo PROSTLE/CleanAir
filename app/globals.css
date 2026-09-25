@@ -540,6 +540,236 @@ a {
   font-size: 1.1rem;
 }
 
+/* 2D / 3D map switch and the MapLibre 3D view */
+.map-view-switch {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 3;
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(251, 251, 247, 0.94);
+  box-shadow: var(--shadow-sm);
+  backdrop-filter: blur(6px);
+}
+
+.map-view-switch button {
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  padding: 6px 14px;
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.map-view-switch button[aria-pressed="true"] {
+  background: var(--ink);
+  color: #fff;
+}
+
+.map-view-switch button:focus-visible,
+.map3d-areas button:focus-visible,
+.map3d-station:focus-visible,
+.map3d-signal:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: 2px;
+}
+
+.map3d {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  background: var(--surface-tint);
+}
+
+.map3d[hidden] {
+  display: none;
+}
+
+/* maplibre-gl.css makes the container position: relative, so size it directly. */
+.map3d-canvas {
+  width: 100%;
+  height: 100%;
+}
+
+.map3d-legend {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: grid;
+  gap: 5px;
+  max-width: 250px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(251, 251, 247, 0.94);
+  box-shadow: var(--shadow-sm);
+  color: var(--ink);
+  font-size: 0.74rem;
+  backdrop-filter: blur(6px);
+}
+
+.map3d-legend span {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.map3d-legend small {
+  color: var(--muted);
+  font-size: 0.7rem;
+}
+
+.map3d-key {
+  flex: none;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+}
+
+.map3d-key.is-station {
+  background: linear-gradient(90deg, #3a9d5d, #d4a72c, #d9772b);
+}
+
+.map3d-key.is-signal {
+  border: 2px solid #fff;
+  background: var(--ink);
+  box-shadow: 0 0 0 1px var(--line-strong);
+}
+
+.map3d-key.is-area {
+  border: 1.5px dashed var(--teal-dark);
+  background: rgba(63, 168, 86, 0.12);
+}
+
+.map3d-areas {
+  position: absolute;
+  /* Sits above the OpenStreetMap attribution line, which must stay visible. */
+  bottom: 36px;
+  left: 12px;
+  right: 56px;
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 2px;
+  scrollbar-width: none;
+}
+
+.map3d-areas button {
+  flex: none;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(251, 251, 247, 0.94);
+  padding: 6px 12px;
+  box-shadow: var(--shadow-sm);
+  color: var(--ink);
+  font-size: 0.76rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.map3d-areas button:hover {
+  border-color: var(--teal);
+  color: var(--teal-dark);
+}
+
+.map3d-station {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  border: 0;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+.map3d-station-head {
+  display: grid;
+  place-items: center;
+  min-width: 32px;
+  height: 22px;
+  padding: 0 7px;
+  border: 2px solid var(--station-color);
+  border-radius: 999px;
+  background: #fff;
+  box-shadow: 0 4px 10px rgba(16, 26, 21, 0.2);
+  color: var(--ink);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.map3d-station-stem {
+  width: 2px;
+  height: 18px;
+  background: var(--station-color);
+}
+
+.map3d-station::after {
+  content: "";
+  width: 7px;
+  height: 7px;
+  margin-top: -1px;
+  border-radius: 50%;
+  background: var(--station-color);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--station-color) 25%, transparent);
+}
+
+.map3d-signal {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 3px solid #fff;
+  border-radius: 50%;
+  background: var(--signal-color);
+  box-shadow:
+    0 0 0 5px color-mix(in srgb, var(--signal-color) 22%, transparent),
+    0 2px 6px rgba(16, 26, 21, 0.25);
+  cursor: pointer;
+}
+
+.map3d .maplibregl-popup-content {
+  border-radius: 10px;
+  padding: 10px 12px;
+  box-shadow: var(--shadow-md);
+  font-family: inherit;
+}
+
+.map3d-popup {
+  display: grid;
+  gap: 3px;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.map3d-popup strong {
+  color: var(--ink);
+  font-size: 0.88rem;
+}
+
+@media (max-width: 520px) {
+  .map3d-legend {
+    top: 54px;
+    left: 12px;
+    right: auto;
+    gap: 3px;
+    padding: 7px 10px;
+    font-size: 0.68rem;
+  }
+
+  .map3d-legend small {
+    font-size: 0.66rem;
+  }
+
+  .map3d-areas {
+    bottom: 50px;
+  }
+}
+
 .public-map-sidebar {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
