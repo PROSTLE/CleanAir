@@ -1,6 +1,8 @@
 import "server-only";
 
 import { applicationDefault, cert, getApps, initializeApp, type ServiceAccount } from "firebase-admin/app";
+import { getAppCheck } from "firebase-admin/app-check";
+import { getAuth } from "firebase-admin/auth";
 import { FieldValue, getFirestore } from "firebase-admin/firestore";
 
 const DEFAULT_FIREBASE_PROJECT_ID = "cleanair-clear-streets";
@@ -62,4 +64,6 @@ const adminApp =
   );
 
 export const adminDb = getFirestore(adminApp);
+export const adminAuth = getAuth(adminApp);
+export const adminAppCheck = getAppCheck(adminApp);
 export const adminServerTimestamp = FieldValue.serverTimestamp;
