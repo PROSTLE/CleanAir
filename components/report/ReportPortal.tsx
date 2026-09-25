@@ -8,6 +8,8 @@ import ReportLocationPicker from "@/components/report/ReportLocationPicker";
 import Navbar from "@/components/shared/Navbar";
 import { db, isFirebaseConfigured } from "@/lib/firebase";
 import { hasPollutionSignal, type FirestoreReport } from "@/lib/firestoreReports";
+import { readPhotoMeta, type PhotoMeta } from "@/lib/exif";
+import { saveMyReport, useMyReports } from "@/lib/myReports";
 import { submitCitizenReport } from "@/lib/reportSubmissions";
 import { useLanguage, useT } from "@/lib/languageContext";
 
@@ -181,6 +183,9 @@ export default function ReportPortal() {
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [voiceError, setVoiceError] = useState("");
+  const [photoMeta, setPhotoMeta] = useState<PhotoMeta | null>(null);
+  const [inPilotArea, setInPilotArea] = useState(true);
+  const myReports = useMyReports();
   const recordingCleanupRef = useRef<(() => void) | null>(null);
 
   const selectedHazard = useMemo(
@@ -252,8 +257,11 @@ export default function ReportPortal() {
     setPhotoUrl("");
     setPhotoPreviewUrl("");
     setIsPreparingPhoto(true);
+    setPhotoMeta(null);
 
     try {
+      // EXIF must be read from the original file: canvas compression strips it.
+      setPhotoMeta(await readPhotoMeta(file));
       const compressedPhoto = await compressPhotoForUpload(file);
       setPhotoPreviewUrl(compressedPhoto);
       const uploadedPhotoUrl = await uploadPhotoToImgBB(compressedPhoto, file.name);
@@ -269,6 +277,7 @@ export default function ReportPortal() {
   }
 
   function handleRemovePhoto() {
+    setPhotoMeta(null);
     setPhotoUrl("");
     setPhotoPreviewUrl("");
     setSubmitError("");
@@ -392,20 +401,28 @@ export default function ReportPortal() {
       return;
     }
 
+    if (!location.lat || !location.lng) {
+      setSubmitError("Set the report location first: detect it, pick a search result, or drop a pin on the map.");
+      setSubmitState("error");
+      return;
+    }
+
     try {
       const submission = await submitCitizenReport({
         anonymous,
-        aiConfidence: selectedHazard.confidence,
         hazardId: selectedHazard.id,
         hazardLabel: selectedHazard.label,
         location,
         note,
         photoUrl,
         result: selectedHazard.result,
+        photoMeta,
       });
 
       setSubmissionId(submission.id);
       setStoredInFirebase(submission.stored);
+      setInPilotArea(submission.inPilotArea);
+      saveMyReport({ id: submission.id, label: location.label, createdAt: new Date().toISOString() });
       if (submission.stored) {
         setClassificationFeedback({
           message: "Analyzing your photo...",
@@ -662,6 +679,9 @@ export default function ReportPortal() {
                     : `Your report helped flag a possible hotspot near ${location.label}. Municipal teams will see it in the incident queue after validation.`}
                 </p>
                 {submissionId && <small className="rp-result-id">ID: {submissionId}</small>}
+                {!inPilotArea && (
+                  <small className="classification-feedback neutral">{t("report_outside_pilot")}</small>
+                )}
                 {classificationFeedback && (
                   <small className={`classification-feedback ${classificationFeedback.tone}`}>
                     {classificationFeedback.tone === "processing" && (
@@ -670,7 +690,34 @@ export default function ReportPortal() {
                     {classificationFeedback.message}
                   </small>
                 )}
+                {submissionId && (
+                  <Link href={`/track/${submissionId}`} className="rp-result-link">
+                    {t("report_track_link")} →
+                  </Link>
+                )}
                 <Link href="/map" className="rp-result-link">{t("report_form_see_nearby")} →</Link>
+              </div>
+            )}
+
+            {myReports.length > 0 && (
+              <div className="rp-pipeline-card rp-my-reports">
+                <h2>{t("report_my_reports")}</h2>
+                <ul>
+                  {myReports.slice(0, 5).map((entry) => (
+                    <li key={entry.id}>
+                      <Link href={`/track/${entry.id}`}>
+                        <strong>{entry.label || entry.id}</strong>
+                        <span>
+                          {new Date(entry.createdAt).toLocaleString("en-IN", {
+                            dateStyle: "medium",
+                            timeStyle: "short",
+                          })}
+                        </span>
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+                <small>{t("report_my_reports_note")}</small>
               </div>
             )}
 
@@ -684,7 +731,7 @@ export default function ReportPortal() {
                 </div>
                 <p>
                   {photoUrl
-                    ? "Check Firestore setup and security rules, then try submitting again."
+                    ? t("report_error_retry")
                     : "Attach a photo so Gemini can classify the report before validation."}
                 </p>
                 {submitError && <small>{submitError}</small>}
