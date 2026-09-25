@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "eval:classifier": "node scripts/eval-classifier.mjs",
+    "test": "node --import ./tests/register-alias.mjs --test \"tests/**/*.test.ts\""
   },
   "dependencies": {
     "@google-cloud/bigquery": "^8.3.1",
@@ -41,5 +43,8 @@
       "@parcel/watcher",
       "@swc/core"
     ]
+  },
+  "engines": {
+    "node": ">=22.18"
   }
 }
