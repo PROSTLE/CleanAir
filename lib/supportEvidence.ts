@@ -132,9 +132,23 @@ export function getStoredSatelliteAnomaly(
   );
 }
 
+/** A NASA FIRMS active-fire pixel within this distance supports a fire report. */
+export const FIRMS_SUPPORT_RADIUS_KM = 2;
+
 export function checkStoredSatelliteSupport(
   satellite: IncidentEvidence["satellite"] | null | undefined,
+  hazardType?: HazardType,
 ): boolean {
+  // An observed active-fire detection is direct satellite evidence for a
+  // fire report, independent of the Sentinel-5P column anomaly.
+  if (
+    hazardType === "fire" &&
+    (satellite?.firmsFireCount ?? 0) > 0 &&
+    satellite?.firmsNearestKm != null &&
+    satellite.firmsNearestKm <= FIRMS_SUPPORT_RADIUS_KM
+  ) {
+    return true;
+  }
   return getStoredSatelliteAnomaly(satellite) >= SATELLITE_SUPPORT_SCORE;
 }
 
