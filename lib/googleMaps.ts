@@ -133,10 +133,11 @@ export function loadGoogleMaps(apiKey: string, options: { places?: boolean } = {
   mapsWindow.cleanAirGoogleMapsPromises[promiseKey] = new Promise((resolve, reject) => {
     const callbackName = `initMap_${promiseKey}_${Math.round(Math.random() * 1000000)}`;
     let settled = false;
-    let timeoutId: number | undefined;
+    const timer: { id?: number } = {};
+    const callbacks = mapsWindow as unknown as Record<string, (() => void) | undefined>;
     const cleanup = () => {
-      if (timeoutId !== undefined) window.clearTimeout(timeoutId);
-      delete (mapsWindow as any)[callbackName];
+      if (timer.id !== undefined) window.clearTimeout(timer.id);
+      delete callbacks[callbackName];
     };
     const fail = (error: Error) => {
       if (settled) return;
@@ -146,7 +147,7 @@ export function loadGoogleMaps(apiKey: string, options: { places?: boolean } = {
       reject(error);
     };
 
-    (mapsWindow as any)[callbackName] = () => {
+    callbacks[callbackName] = () => {
       if (settled) return;
       settled = true;
       cleanup();
@@ -165,7 +166,7 @@ export function loadGoogleMaps(apiKey: string, options: { places?: boolean } = {
     script.async = true;
     script.defer = true;
     script.onerror = () => fail(new Error("Google Maps failed to load."));
-    timeoutId = window.setTimeout(() => {
+    timer.id = window.setTimeout(() => {
       fail(new Error("Google Maps timed out while loading."));
     }, GOOGLE_MAPS_LOAD_TIMEOUT_MS);
     document.head.appendChild(script);
