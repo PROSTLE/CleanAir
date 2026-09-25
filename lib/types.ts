@@ -46,7 +46,9 @@ export interface IncidentEvidence {
   };
   coverage: {
     level: "good" | "limited" | "low";
-    nearestSensorKm: number;
+    // null = no CPCB station with usable data was found (or the lookup has
+    // not run yet). Never substitute a guessed distance.
+    nearestSensorKm: number | null;
     label: string;
   };
   fusion: {
@@ -82,9 +84,22 @@ export interface IncidentEvidence {
     no2Anomaly?: number;
     rawNo2?: number | null;
     selectedChannel?: "balanced" | "fireDustSmoke" | "industrialTraffic";
+    // NASA FIRMS active-fire pixels near the report (last 48 h).
+    firmsFireCount?: number;
+    firmsNearestKm?: number | null;
+    // Sentinel-5P product used for the current window (NRTI or OFFL).
+    currentProduct?: string | null;
+  };
+  // OpenWeatherMap wind at classification time (direction wind blows FROM).
+  wind?: {
+    speedMs: number;
+    fromDeg: number;
+    fetchedAt: string;
   };
   sensor: {
-    pm25Delta: number;
+    fresh?: boolean;
+    // null when no real station reading backs this evidence.
+    pm25Delta: number | null;
     primaryDelta?: number;
     primaryName?: string;
     primaryValue?: number | null;
@@ -98,7 +113,9 @@ export interface IncidentEvidence {
     watchThreshold?: number;
     baselineSource?: "station_history" | "delhi_median";
     trend: "rising" | "flat" | "falling" | "insufficient_data";
-    source?: "CPCB" | "estimated";
+    // "unavailable" = no station reading; "estimated" only survives on
+    // legacy docs written before placeholder values were removed.
+    source?: "CPCB" | "estimated" | "unavailable";
     stationName?: string;
     distanceKm?: number;
     lastUpdated?: string;
@@ -133,6 +150,10 @@ export interface Incident {
   dispatchedAction?: string;
   dispatchedAt?: string;
   resolvedAt?: string;
+  outcome?: IncidentOutcome;
+  integrity?: ReportIntegrity;
+  workOrder?: WorkOrder;
+  channel?: "web" | "whatsapp";
   // Ambient-scan-only fields — set when source is sensor/satellite and no
   // citizen report exists. Lists every hazard category whose sensor/satellite
   // threshold was crossed (e.g. ["dust","industrial"]) so the map can show
@@ -175,4 +196,38 @@ export interface LiveStats {
   activeHotspots: number;
   resolvedToday: number;
   avgResponseTimeMinutes: number;
+}
+
+// ─── Report integrity (anti-spam) ────────────────────────────────────────────
+export type IntegrityFlag =
+  | "duplicate_photo"
+  | "screen_or_screenshot"
+  | "edited_or_stock"
+  | "photo_older_than_24h"
+  | "photo_gps_far_from_location";
+
+export interface ReportIntegrity {
+  flags: IntegrityFlag[];
+  /** Flagged reports stay visible to operators but never count toward promotion. */
+  excludeFromPromotion: boolean;
+  duplicateOf?: string | null;
+  photoTakenAt?: string | null;
+  photoGpsDistanceKm?: number | null;
+}
+
+/** Operator verdict; drives the operator-verified precision metric. */
+export type IncidentOutcome = "confirmed" | "false_positive";
+
+export interface WorkOrder {
+  department: string;
+  priority: "immediate" | "within_24h" | "routine";
+  subject: string;
+  summary: string;
+  bodyEn: string;
+  bodyHi: string;
+  actions: string[];
+  evidenceCited: string[];
+  generatedAt: string;
+  generatedBy: string | null;
+  model: string;
 }
