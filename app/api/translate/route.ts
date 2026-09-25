@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { GoogleAuth } from "google-auth-library";
 import { NextResponse } from "next/server";
 import path from "path";
@@ -8,19 +9,37 @@ let auth: GoogleAuth | null = null;
 
 function getAuth() {
   if (!auth) {
+    // Use the local key file when it exists (dev); otherwise fall back to
+    // Application Default Credentials — the runtime service account on
+    // Cloud Run / App Hosting, where the gitignored key file is never present.
     auth = new GoogleAuth({
-      keyFile: CREDENTIALS_PATH,
+      ...(existsSync(CREDENTIALS_PATH) ? { keyFile: CREDENTIALS_PATH } : {}),
       scopes: ["https://www.googleapis.com/auth/cloud-translation"],
     });
   }
   return auth;
 }
 
+const MAX_TEXTS = 1000;
+const MAX_TOTAL_CHARS = 100_000;
+
 export async function POST(request: Request) {
+  // The UI ships pre-generated locales (locales/*.json) and never calls this
+  // route; it only exists for tooling. Left open, it is a public proxy onto
+  // our billed Translation API, so it is off unless a secret is configured.
+  const secret = process.env.TRANSLATE_API_SECRET?.trim();
+  if (!secret || request.headers.get("authorization") !== `Bearer ${secret}`) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
   try {
     const { texts, target } = (await request.json()) as { texts: string[]; target: string };
     if (!texts?.length || !target) {
       return NextResponse.json({ error: "Missing texts or target" }, { status: 400 });
+    }
+    const totalChars = texts.reduce((sum, text) => sum + String(text).length, 0);
+    if (texts.length > MAX_TEXTS || totalChars > MAX_TOTAL_CHARS) {
+      return NextResponse.json({ error: "Request too large" }, { status: 413 });
     }
     
     // Get OAuth2 access token from service account
