@@ -102,7 +102,6 @@
   "forecast_metric_generated": "જનરેટ કરેલ",
   "forecast_metric_generated_desc": "સ્થાનિક સમય · ૧૦૦ મિ.સે. થી નીચે",
   "forecast_chart_title": "૨૪-કલાક PM૨.૫ આગાહી",
-  "forecast_chart_subtitle": "ટીલ = તાજેતરના વાસ્તવિક આંકડા · ઈન્ડિગો ડેશેડ = હ્યુરિસ્ટિક આગાહી",
   "forecast_chart_refresh": "↺ તાજું કરો",
   "forecast_chart_label_forecast": "આગાહી",
   "forecast_chart_label_actual": "વાસ્તવિક",

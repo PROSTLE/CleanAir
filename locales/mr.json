@@ -102,7 +102,6 @@
   "forecast_metric_generated": "निर्माण केले",
   "forecast_metric_generated_desc": "स्थानिक वेळ · १०० मिलिसेकंदांपेक्षा कमी",
   "forecast_chart_title": "२४-तासांचा पीएम २.५ अंदाज",
-  "forecast_chart_subtitle": "टील = अलीकडील वास्तविक आकडेवारी · इंडिगो डॅश्ड = अनुमानित अंदाज",
   "forecast_chart_refresh": "↺ रिफ्रेश करा",
   "forecast_chart_label_forecast": "अंदाज",
   "forecast_chart_label_actual": "वास्तविक",

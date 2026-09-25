@@ -102,7 +102,6 @@
   "forecast_metric_generated": "ਤਿਆਰ ਕੀਤਾ ਗਿਆ",
   "forecast_metric_generated_desc": "ਸਥਾਨਕ ਸਮਾਂ · 100 ਮਿਲੀਸੈਕਿੰਡ ਤੋਂ ਘੱਟ",
   "forecast_chart_title": "24-ਘੰਟੇ PM2.5 ਪੂਰਵ ਅਨੁਮਾਨ",
-  "forecast_chart_subtitle": "ਟੀਲ = ਹਾਲੀਆ ਅਸਲ ਅੰਕੜੇ · ਇੰਡੀਗੋ ਡੈਸ਼ਡ = ਹਿਊਰਿਸਟਿਕ ਭਵਿੱਖਬਾਣੀ",
   "forecast_chart_refresh": "↺ ਤਾਜ਼ਾ ਕਰੋ",
   "forecast_chart_label_forecast": "ਪੂਰਵ ਅਨੁਮਾਨ",
   "forecast_chart_label_actual": "ਅਸਲ",

@@ -102,7 +102,6 @@
   "forecast_metric_generated": "जनरेट किया गया",
   "forecast_metric_generated_desc": "स्थानीय समय · 100 मिलीसेकंड से कम",
   "forecast_chart_title": "24 घंटे का पीएम2.5 पूर्वानुमान",
-  "forecast_chart_subtitle": "टील = हाल के वास्तविक आंकड़े · इंडिगो डैश वाली रेखा = अनुमानित पूर्वानुमान",
   "forecast_chart_refresh": "↺ रीफ़्रेश करें",
   "forecast_chart_label_forecast": "पूर्वानुमान",
   "forecast_chart_label_actual": "वास्तविक",

@@ -102,7 +102,6 @@
   "forecast_metric_generated": "സൃഷ്ടിച്ചത്",
   "forecast_metric_generated_desc": "പ്രാദേശിക സമയം · 100 മില്ലിസെക്കൻഡിൽ താഴെ",
   "forecast_chart_title": "24 മണിക്കൂർ PM2.5 കാലാവസ്ഥാ പ്രവചനം",
-  "forecast_chart_subtitle": "ടീൽ = സമീപകാല യഥാർത്ഥ വിവരങ്ങൾ · ഇൻഡിഗോ ഡാഷ്ഡ് = ഹ്യൂറിസ്റ്റിക് പ്രവചനം",
   "forecast_chart_refresh": "↺ പുതുക്കുക",
   "forecast_chart_label_forecast": "പ്രവചനം",
   "forecast_chart_label_actual": "യഥാർത്ഥം",

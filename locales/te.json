@@ -102,7 +102,6 @@
   "forecast_metric_generated": "ఉత్పత్తి చేయబడింది",
   "forecast_metric_generated_desc": "స్థానిక సమయం · 100ms లోపు",
   "forecast_chart_title": "24-గంటల PM2.5 వాతావరణ సూచన",
-  "forecast_chart_subtitle": "టీల్ = ఇటీవలి వాస్తవాలు · ఇండిగో డాష్డ్ = అనుభవపూర్వక అంచనా",
   "forecast_chart_refresh": "↺ రిఫ్రెష్",
   "forecast_chart_label_forecast": "అంచనా",
   "forecast_chart_label_actual": "వాస్తవమైన",

@@ -102,7 +102,6 @@
   "forecast_metric_generated": "তৈরি করা হয়েছে",
   "forecast_metric_generated_desc": "স্থানীয় সময় · ১০০ মিলিসেকেন্ডের কম",
   "forecast_chart_title": "২৪-ঘণ্টার পিএম২.৫ পূর্বাভাস",
-  "forecast_chart_subtitle": "টিল = সাম্প্রতিক প্রকৃত মান · নীল ড্যাশযুক্ত = আনুমানিক পূর্বাভাস",
   "forecast_chart_refresh": "↺ রিফ্রেশ",
   "forecast_chart_label_forecast": "পূর্বাভাস",
   "forecast_chart_label_actual": "প্রকৃত",
