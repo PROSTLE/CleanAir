@@ -7,7 +7,7 @@ import type { SatelliteDataResult } from "@/lib/earthEngineSatellite";
 import { getSatelliteDataForPoint } from "@/lib/earthEngineSatellite";
 import { computeFusionConfidence, satelliteWeightToScore, sensorDeltaToScore } from "@/lib/fusionConfidence";
 import { isInOperationalRegion } from "@/lib/operationalRegion";
-import { getH3CellId, getSeverity } from "@/lib/reportSubmissions";
+import { getH3CellId, getSeverity } from "@/lib/geo";
 import {
   SENSOR_PROXIMITY_KM,
   SENSOR_EXTREME_DELTA_PCT,
@@ -826,6 +826,19 @@ export async function scanAmbientHotspots(): Promise<{
     const hazardType = dominant.hazardType;
     const incidentRef = adminDb.collection("incidents").doc(`ambient-${h3CellId}`);
     const existingSnap = await incidentRef.get();
+    // An operator resolution (the only path that writes resolvedAt) must not
+    // be silently undone by the next scan. Respect it for the same grace
+    // window used for auto-resolution; after that, a still-elevated reading
+    // is treated as a new event and reopens the incident.
+    const existingForRespect = existingSnap.data();
+    const operatorResolvedAtMs = timestampLikeToMs(existingForRespect?.resolvedAt);
+    if (
+      existingForRespect?.status === "resolved" &&
+      operatorResolvedAtMs !== null &&
+      Date.now() - operatorResolvedAtMs < AMBIENT_NO_SUPPORT_GRACE_HOURS * 60 * 60 * 1000
+    ) {
+      continue;
+    }
     const possibleSources = passedChecks.map((c) => c.hazardType);
     const source: "sensor" | "satellite" =
       tier === "satellite_detected" ? "satellite" : "sensor";
@@ -879,7 +892,7 @@ export async function scanAmbientHotspots(): Promise<{
         coverage: {
           label: sensorResult.distanceKm !== null ? `${sensorResult.distanceKm.toFixed(1)} km to nearest station` : "No nearby station",
           level: sensorResult.distanceKm !== null && sensorResult.distanceKm <= 1 ? "good" : "limited",
-          nearestSensorKm: sensorResult.distanceKm ?? 5,
+          nearestSensorKm: sensorResult.distanceKm ?? null,
         },
         fusion: {
           coverageAdjusted: false,
@@ -922,12 +935,34 @@ export async function scanAmbientHotspots(): Promise<{
           distanceKm: sensorResult.distanceKm ?? undefined,
           lastUpdated: sensorResult.lastUpdated ?? undefined,
           source: "CPCB",
-          trend: sensorResult.supported ? "rising" : "flat",
+          // A single snapshot can't establish a trend; report it against the
+          // station's own recorded baseline when one exists.
+          trend:
+            sensorResult.localBaselineDeltaPct == null
+              ? "insufficient_data"
+              : sensorResult.localBaselineDeltaPct > 0
+                ? "rising"
+                : sensorResult.localBaselineDeltaPct < 0
+                  ? "falling"
+                  : "flat",
         },
       },
     };
 
-    if (existingSnap.exists) {
+    if (existingSnap.exists && existingSnap.data()?.status === "resolved") {
+      // Reopening after the grace window is a new event: fresh lifecycle,
+      // no stale dispatch/outcome from the previous one.
+      await incidentRef.update({
+        ...sharedPayload,
+        createdAt: adminServerTimestamp(),
+        dispatchStatus: null,
+        dispatchedAt: null,
+        dispatchedAction: null,
+        resolvedAt: null,
+        outcome: null,
+        workOrder: null,
+      });
+    } else if (existingSnap.exists) {
       // Doc already exists — update in place, preserving the original createdAt
       // so the "Age" displayed in the Command Center reflects when pollution
       // was FIRST detected, not when this scan last ran.
