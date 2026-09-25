@@ -15,25 +15,28 @@ const IMGBB_API_KEY = process.env.IMGBB_API_KEY;
 
 
 
-const APP_URL = "https://cleanair-backend--cleanair-clear-streets.asia-southeast1.hosted.app/";
+// No trailing slash: requests are built as `${APP_URL}/api/...`. The old
+// value ended in "/" and produced "//api/classify-report".
+const APP_URL = (process.env.APP_URL || "https://cleanair-backend--cleanair-clear-streets.asia-southeast1.hosted.app").replace(/\/+$/, "");
 
 const db = admin.firestore();
 const CATEGORY_LABELS = { "1": "garbage_fire", "2": "traffic_smog", "3": "construction_dust", "4": "industrial_emission" };
 
 const H3_RESOLUTION = 8;
-const DEFAULT_H3_CELL_ID = "883da114bbfffff";
 
+// Citizen category is context only; confidence comes from Gemini's
+// classification of the photo in /api/classify-report.
 const HAZARD_MAP = {
-  garbage_fire: { hazardId: "garbage-fire", hazardLabel: "Garbage fire", aiConfidence: 78, result: "Likely garbage fire" },
-  traffic_smog: { hazardId: "traffic-smog", hazardLabel: "Traffic smog", aiConfidence: 71, result: "Likely traffic smog trap" },
-  construction_dust: { hazardId: "construction-dust", hazardLabel: "Construction dust", aiConfidence: 74, result: "Likely construction dust" },
-  industrial_emission: { hazardId: "industrial-emission", hazardLabel: "Industrial emission", aiConfidence: 82, result: "Likely industrial emission" },
+  garbage_fire: { hazardId: "garbage-fire", hazardLabel: "Garbage fire", result: "Likely garbage fire" },
+  traffic_smog: { hazardId: "traffic-smog", hazardLabel: "Traffic smog", result: "Likely traffic smog trap" },
+  construction_dust: { hazardId: "construction-dust", hazardLabel: "Construction dust", result: "Likely construction dust" },
+  industrial_emission: { hazardId: "industrial-emission", hazardLabel: "Industrial emission", result: "Likely industrial emission" },
 };
 
 const CIRCLED_NUMBERS = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨", "⑩", "⑪", "⑫", "⑬"];
 
 function buildLangMenu() {
-  return "👋 Welcome to CleanAir reporter!\nChoose your language / भाषा चुनें:\n\n" +
+  return "👋 Welcome to the VayuSetu reporter!\nChoose your language / भाषा चुनें:\n\n" +
     LANG_ORDER.map((code, i) => {
       const num = CIRCLED_NUMBERS[i] || `(${i + 1})`;
       return `\u200E${num} ${TEXT[code]?.name || code}`;
@@ -41,12 +44,27 @@ function buildLangMenu() {
 }
 
 function getH3CellId(lat, lng) {
-  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return DEFAULT_H3_CELL_ID;
   return latLngToCell(lat, lng, H3_RESOLUTION);
+}
+
+// Twilio signs every webhook with the account auth token. Without this
+// check anyone who finds the function URL can post fake reports. Set
+// TWILIO_WEBHOOK_URL to the exact public URL configured in Twilio if the
+// function sits behind a proxy that rewrites the host.
+function isValidTwilioRequest(req) {
+  if (!TWILIO_AUTH_TOKEN || process.env.TWILIO_SKIP_SIGNATURE_CHECK === "true") return true;
+  const signature = req.get("X-Twilio-Signature");
+  if (!signature) return false;
+  const url = process.env.TWILIO_WEBHOOK_URL || `https://${req.get("host")}${req.originalUrl}`;
+  return twilio.validateRequest(TWILIO_AUTH_TOKEN, signature, url, req.body || {});
 }
 
 exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
   if (req.method !== "POST") return res.sendStatus(400);
+  if (!isValidTwilioRequest(req)) {
+    console.warn("Rejected webhook with invalid Twilio signature.");
+    return res.sendStatus(403);
+  }
   const twiml = new twilio.twiml.MessagingResponse();
   const { From, Body, NumMedia, MediaUrl0, Latitude, Longitude, Address } = req.body;
   const userPhone = From.replace("whatsapp:", "");
@@ -221,6 +239,7 @@ async function uploadToImgBB(mediaUrl) {
 
     return { success: true, url: imgbbResponse.data.data.url };
   } catch (err) {
+    console.error("Unexpected upload error:", err);
     return { success: false, error: "Unexpected system error during upload." };
   }
 }
@@ -228,16 +247,20 @@ async function uploadToImgBB(mediaUrl) {
 async function saveReport(phone, data, note) {
   try {
     const hazard = HAZARD_MAP[data.category] || HAZARD_MAP.garbage_fire;
-    const lat = data.location?.lat ?? 28.6264;
-    const lng = data.location?.lng ?? 77.3192;
+    // The conversation only reaches saveReport after a location was shared;
+    // refuse rather than pin the report to a made-up Delhi coordinate.
+    const lat = Number(data.location?.lat);
+    const lng = Number(data.location?.lng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      throw new Error("Report has no valid location.");
+    }
     const label = data.locationLabel || "Shared via WhatsApp";
-    const h3CellId = getH3CellId(Number(lat), Number(lng));
+    const h3CellId = getH3CellId(lat, lng);
 
     const newReport = {
       anonymous: true,
       hazardId: hazard.hazardId,
       hazardLabel: hazard.hazardLabel,
-      aiConfidence: hazard.aiConfidence,
       result: hazard.result,
       location: { label, lat: String(lat), lng: String(lng) },
       photoUrl: data.photoUrl || "",
@@ -245,11 +268,21 @@ async function saveReport(phone, data, note) {
       source: "citizen",
       channel: "whatsapp",
       status: "pending",
+      classificationAttempts: 0,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
       h3CellId,
     };
 
     const docRef = await db.collection("reports").add(newReport);
+    // Phone numbers stay out of the public reports doc: reportContacts is
+    // closed to all clients by firestore.rules and read only by the server
+    // when an operator dispatches/resolves (WhatsApp status updates).
+    await db.collection("reportContacts").doc(docRef.id).set({
+      channel: "whatsapp",
+      phone,
+      lang: data.lang || "en",
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
     console.log(`Report saved: ${docRef.id}. Attempting classification trigger at ${APP_URL}`);
 
     if (APP_URL && !APP_URL.includes("PASTE_YOUR")) {
