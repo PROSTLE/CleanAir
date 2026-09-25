@@ -11,10 +11,12 @@ INPUT FILES NEEDED (same folder as this script):
 
 RUN:
    cd ml
-   python3 prep_delhi_data.py
+   python3 data-prep.py
 
 OUTPUT:
-   delhi_historical_snapshots.csv
+   delhi_historical_snapshots.csv  (column names match the BigQuery table
+   read by lib/server/bigqueryLive.ts; load with --autodetect or the schema in
+   scripts/setup-bigquery.sql)
 """
 
 import pandas as pd
@@ -54,23 +56,28 @@ def main():
     datetime_col = "Datetime" if "Datetime" in readings.columns else "Date"
 
     out = pd.DataFrame({
-        "sampledAt": pd.to_datetime(readings[datetime_col]),
+        # CPCB timestamps are IST wall-clock time. Localise before writing so
+        # BigQuery's TIMESTAMP (UTC) holds the true instant; a naive value
+        # would be read as UTC and shift every reading by 5.5 hours.
+        "sampledAt": pd.to_datetime(readings[datetime_col])
+        .dt.tz_localize("Asia/Kolkata")
+        .dt.tz_convert("UTC"),
         "h3CellId": readings["h3CellId"],
-        "location.label": readings["StationName"],
-        "location.lat": readings["Latitude"],
-        "location.lng": readings["Longitude"],
-        "sensor.pm25": readings.get("PM2.5"),
-        "sensor.pm10": readings.get("PM10"),
-        "sensor.no2": readings.get("NO2"),
-        "sensor.so2": readings.get("SO2"),
-        "sensor.co": readings.get("CO"),
-        "sensor.nh3": readings.get("NH3"),
-        "sensor.ozone": readings.get("O3"),
+        "location_label": readings["StationName"],
+        "location_lat": readings["Latitude"],
+        "location_lng": readings["Longitude"],
+        "sensor_pm25": readings.get("PM2.5"),
+        "sensor_pm10": readings.get("PM10"),
+        "sensor_no2": readings.get("NO2"),
+        "sensor_so2": readings.get("SO2"),
+        "sensor_co": readings.get("CO"),
+        "sensor_nh3": readings.get("NH3"),
+        "sensor_ozone": readings.get("O3"),
         "sourceContext": "historical_cpcb_kaggle",
     })
 
     before = len(out)
-    out = out.dropna(subset=["sensor.pm25", "sensor.pm10"], how="all")
+    out = out.dropna(subset=["sensor_pm25", "sensor_pm10"], how="all")
     print(f"Dropped {before - len(out)} rows with no PM2.5/PM10 data.")
 
     out = out.sort_values("sampledAt")
