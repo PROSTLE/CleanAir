@@ -9,6 +9,7 @@ import {
   type GoogleMapMarker,
   type GooglePlaceAutocomplete,
 } from "@/lib/googleMaps";
+import { toCoordinate } from "@/lib/geo";
 import { useT } from "@/lib/languageContext";
 
 export interface ReportLocationValue {
@@ -53,8 +54,9 @@ const pickerMapStyles = [
 ];
 
 function toPosition(location: ReportLocationValue) {
-  const lat = Number(location.lat);
-  const lng = Number(location.lng);
+  // Blank means "not set yet": open on Delhi, not on (0, 0).
+  const lat = toCoordinate(location.lat);
+  const lng = toCoordinate(location.lng);
 
   if (Number.isFinite(lat) && Number.isFinite(lng)) {
     return { lat, lng };
@@ -314,12 +316,16 @@ export default function ReportLocationPicker({
       </div>
 
       <input
-        value={value.label === "default_location_label" ? t("default_location_label") : value.label}
+        value={value.label}
         id="report-location"
         onChange={(event) =>
+          // Free text alone has no coordinates. Clear the previous pin so a
+          // typed "Rohini" can't be saved at the old location's lat/lng;
+          // picking a suggestion, detecting, or dropping a pin sets them.
           onChange({
-            ...value,
             label: event.target.value,
+            lat: "",
+            lng: "",
           })
         }
         placeholder={t("location_picker_search")}
@@ -347,7 +353,9 @@ export default function ReportLocationPicker({
           {helperText || t("report_form_use_gps")}
         </small>
         <span>
-          {value.lat.toString().substring(0, 9)}, {value.lng.toString().substring(0, 9)}
+          {value.lat && value.lng
+            ? `${value.lat.toString().substring(0, 9)}, ${value.lng.toString().substring(0, 9)}`
+            : "No location set"}
         </span>
       </div>
     </div>
