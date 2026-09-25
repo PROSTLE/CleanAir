@@ -1,18 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
-import {
-  collection,
-  doc,
-  limit,
-  onSnapshot,
-  orderBy,
-  query,
-  serverTimestamp,
-  updateDoc,
-} from "firebase/firestore";
-import GoogleHotspotMap from "@/components/map/GoogleHotspotMap";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { collection, limit, onSnapshot, orderBy, query } from "firebase/firestore";
+import GoogleHotspotMap, { type FireMarker } from "@/components/map/GoogleHotspotMap";
+import IncidentDrawer, { type DrawerTarget } from "@/components/dashboard/IncidentDrawer";
+import ModelQualityCard from "@/components/dashboard/ModelQualityCard";
+import OperatorAuth from "@/components/dashboard/OperatorAuth";
+import OperatorCopilot from "@/components/dashboard/OperatorCopilot";
+import Icon from "@/components/shared/Icon";
+import LiveIndicator from "@/components/shared/LiveIndicator";
 import { db, isFirebaseConfigured } from "@/lib/firebase";
 import {
   hasPollutionSignal,
@@ -20,12 +17,8 @@ import {
   type FirestoreReport,
 } from "@/lib/firestoreReports";
 import { isInOperationalRegion } from "@/lib/operationalRegion";
-import {
-  formatStatus,
-  getIncidentAge,
-  getRecommendedAction,
-  getRecommendedActionKey,
-} from "@/components/command/commandData";
+import { parseSensorTimestamp, priorityRank, TIER_LABELS } from "@/lib/supportEvidence";
+import { formatStatus, getIncidentAge } from "@/components/command/commandData";
 import type { HazardType, Incident, Severity } from "@/lib/types";
 import { useT } from "@/lib/languageContext";
 
@@ -36,6 +29,14 @@ const HAZARDS: HazardType[] = ["fire", "smog", "dust", "industrial", "particulat
 const SEVERITIES: Severity[] = ["critical", "medium", "low"];
 
 type Integrations = Record<string, boolean>;
+
+type FireFeed = {
+  fires: FireMarker[];
+  windowStart: string;
+  windowEnd: string;
+  truncated: boolean;
+  error?: string;
+};
 
 function isLive(incident: Incident) {
   return (
@@ -49,6 +50,14 @@ function metric(value: number, connected: boolean): string {
   return connected ? String(value) : EMPTY;
 }
 
+function compareIncidents(a: Incident, b: Incident) {
+  const reportsA = a.evidence?.citizenSignal?.reportCount ?? 0;
+  const reportsB = b.evidence?.citizenSignal?.reportCount ?? 0;
+  const rankDelta = priorityRank(a.evidence?.tier, reportsA) - priorityRank(b.evidence?.tier, reportsB);
+  if (rankDelta !== 0) return rankDelta;
+  return (b.evidence?.fusion.finalConfidence ?? b.aiConfidence) - (a.evidence?.fusion.finalConfidence ?? a.aiConfidence);
+}
+
 export default function DashboardView() {
   const t = useT();
   const [incidents, setIncidents] = useState<Incident[]>([]);
@@ -56,7 +65,10 @@ export default function DashboardView() {
   const [connected, setConnected] = useState(false);
   const [feedError, setFeedError] = useState<string | null>(null);
   const [integrations, setIntegrations] = useState<Integrations | null>(null);
-  const [dispatching, setDispatching] = useState<string | null>(null);
+  const [fireFeed, setFireFeed] = useState<FireFeed | null>(null);
+  const [showFires, setShowFires] = useState(true);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isFirebaseConfigured || !db) return;
@@ -92,6 +104,19 @@ export default function DashboardView() {
     );
   }, []);
 
+  // Sensor/satellite-only (ambient) detection runs when something calls
+  // /api/scan-ambient. Cloud Scheduler → /api/cron/tick is the production
+  // trigger; this keeps the layer fresh during demos. The route enforces
+  // its own cooldown.
+  useEffect(() => {
+    if (!isFirebaseConfigured) return;
+    const controller = new AbortController();
+    fetch("/api/scan-ambient", { signal: controller.signal }).catch(() => {
+      /* scan failures surface in server logs; the feed still renders */
+    });
+    return () => controller.abort();
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     fetch("/api/system-status")
@@ -102,16 +127,40 @@ export default function DashboardView() {
       .catch(() => {
         /* status panel just stays unknown */
       });
+    fetch("/api/fires")
+      .then(async (r) => (await r.json()) as FireFeed)
+      .then((data) => {
+        if (!cancelled) setFireFeed(data);
+      })
+      .catch(() => {
+        if (!cancelled) setFireFeed({ fires: [], windowStart: "", windowEnd: "", truncated: false, error: "unavailable" });
+      });
     return () => {
       cancelled = true;
     };
   }, []);
 
-  const active = useMemo(() => incidents.filter(isLive), [incidents]);
+  useEffect(() => {
+    if (!toast) return;
+    const id = window.setTimeout(() => setToast(null), 4000);
+    return () => window.clearTimeout(id);
+  }, [toast]);
+
+  const active = useMemo(() => incidents.filter(isLive).sort(compareIncidents), [incidents]);
   const queue = useMemo(
     () => reports.filter((r) => isLive(r) && !r.evidence?.alertTier),
     [reports],
   );
+
+  const selectedTarget: DrawerTarget | null = useMemo(() => {
+    if (!selectedId) return null;
+    const fromIncidents = incidents.find((incident) => incident.id === selectedId);
+    if (fromIncidents) return { incident: fromIncidents, collection: "incidents" };
+    const fromReports = reports.find((report) => report.id === selectedId);
+    return fromReports ? { incident: fromReports, collection: "reports" } : null;
+  }, [selectedId, incidents, reports]);
+
+  const closeDrawer = useCallback(() => setSelectedId(null), []);
 
   const critical = active.filter((i) => i.severity === "critical").length;
   const resolvedToday = incidents.filter((i) => {
@@ -120,7 +169,14 @@ export default function DashboardView() {
   }).length;
 
   const avgConfidence = active.length
-    ? Math.round(active.reduce((sum, i) => sum + i.aiConfidence, 0) / active.length)
+    ? Math.round(
+        active.reduce((sum, i) => sum + (i.evidence?.fusion.finalConfidence ?? i.aiConfidence), 0) / active.length,
+      )
+    : null;
+
+  const judged = incidents.filter((i) => i.outcome === "confirmed" || i.outcome === "false_positive");
+  const verifiedPrecision = judged.length
+    ? Math.round((judged.filter((i) => i.outcome === "confirmed").length / judged.length) * 100)
     : null;
 
   const hazardMix = HAZARDS.map((hazard) => ({
@@ -146,6 +202,9 @@ export default function DashboardView() {
     () => active.find((i) => i.evidence?.sensor?.pm25 != null)?.evidence?.sensor ?? null,
     [active],
   );
+  // CPCB stamps are "DD-MM-YYYY HH:MM:SS" in IST, which `new Date()` either
+  // rejects ("Invalid Date") or reads month-first. Use the shared parser.
+  const sensorUpdatedMs = parseSensorTimestamp(sensor?.lastUpdated);
 
   const maxHazard = Math.max(1, ...hazardMix.map((h) => h.count));
 
@@ -180,25 +239,13 @@ export default function DashboardView() {
       value: avgConfidence == null ? EMPTY : `${avgConfidence}%`,
       detail: t("dash_kpi_confidence_detail"),
     },
+    {
+      id: "precision",
+      label: t("dash_kpi_precision"),
+      value: verifiedPrecision == null ? EMPTY : `${verifiedPrecision}%`,
+      detail: t("dash_kpi_precision_detail").replace("{n}", String(judged.length)),
+    },
   ];
-
-  const handleDispatch = async (incident: Incident) => {
-    if (!db || incident.dispatchStatus === "dispatched") return;
-    setDispatching(incident.id);
-    try {
-      const collectionName = incident.evidence?.alertTier ? "incidents" : "reports";
-      const docId = incident.id.replace("firestore-", "");
-      await updateDoc(doc(db, collectionName, docId), {
-        dispatchStatus: "dispatched",
-        dispatchedAction: t(getRecommendedActionKey(incident)) || getRecommendedAction(incident),
-        dispatchedAt: serverTimestamp(),
-      });
-    } catch (error) {
-      console.error("Failed to dispatch:", error);
-    } finally {
-      setDispatching(null);
-    }
-  };
 
   const integrationRows = [
     { id: "firestore", label: t("dash_src_firestore"), ok: isFirebaseConfigured },
@@ -208,21 +255,28 @@ export default function DashboardView() {
     { id: "earthEngine", label: t("dash_src_earth_engine"), ok: integrations?.earthEngine },
     { id: "bigQuery", label: t("dash_src_bigquery"), ok: integrations?.bigQuery },
     { id: "openWeather", label: t("dash_src_openweather"), ok: integrations?.openWeather },
+    { id: "googleAirQuality", label: t("dash_src_air_quality"), ok: integrations?.googleAirQuality },
+    { id: "places", label: t("dash_src_places"), ok: integrations?.places },
+    { id: "whatsappNotify", label: t("dash_src_whatsapp"), ok: integrations?.whatsappNotify },
+    { id: "operatorAuth", label: t("dash_src_operator_auth"), ok: integrations?.operatorAuth },
+    { id: "scheduler", label: t("dash_src_scheduler"), ok: integrations?.scheduler },
   ];
 
-  const rows = [...active].sort((a, b) => b.aiConfidence - a.aiConfidence).slice(0, 12);
+  const rows = active.slice(0, 15);
+  const mapIncidents = useMemo(() => [...active, ...queue], [active, queue]);
 
   return (
     <div className="svd">
       <header className="svd-head">
         <div>
-          <p className="sv-eyebrow">
-            <span className={`sv-live-dot ${connected ? "is-live" : ""}`} aria-hidden="true" />
-            {connected ? t("dash_feed_live") : t("dash_feed_idle")}
-          </p>
+          <LiveIndicator
+            state={connected ? "live" : isFirebaseConfigured ? "connecting" : "offline"}
+            label={connected ? t("dash_feed_live") : t("dash_feed_idle")}
+          />
           <h1>{t("dash_title")}</h1>
           <p className="svd-lede">{t("dash_lede")}</p>
         </div>
+        <OperatorAuth />
       </header>
 
       {feedError && (
@@ -241,10 +295,115 @@ export default function DashboardView() {
         ))}
       </ul>
 
+      <section className="svd-card svd-queue">
+        <header className="svd-card-head svd-card-head-split">
+          <div>
+            <h2 className="vs-title">
+              <Icon name="list" size={17} />
+              {t("dash_queue")}
+            </h2>
+            <p>{t("dash_queue_detail")}</p>
+          </div>
+          <Link href="/report" className="sv-underline-link">
+            {t("nav_report_button")}
+          </Link>
+        </header>
+
+        {rows.length === 0 ? (
+          <p className="svd-empty">{connected ? t("dash_queue_empty") : t("dash_no_signal")}</p>
+        ) : (
+          <div className="svd-table-scroll">
+            <table className="svd-table">
+              <thead>
+                <tr>
+                  <th scope="col">{t("dash_col_location")}</th>
+                  <th scope="col">{t("dash_col_hazard")}</th>
+                  <th scope="col">{t("dash_col_evidence")}</th>
+                  <th scope="col">{t("dash_col_severity")}</th>
+                  <th scope="col">{t("dash_col_confidence")}</th>
+                  <th scope="col">{t("dash_col_age")}</th>
+                  <th scope="col">{t("dash_col_status")}</th>
+                  <th scope="col">{t("dash_col_action")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((incident) => (
+                  <tr key={incident.id}>
+                    <td>{incident.neighborhood || EMPTY}</td>
+                    <td>{t(`hazard_${incident.hazardType}`)}</td>
+                    <td className="svd-status">
+                      {incident.evidence?.tier
+                        ? t(`tier_${incident.evidence.tier}`) || TIER_LABELS[incident.evidence.tier]
+                        : EMPTY}
+                    </td>
+                    <td>
+                      <span className={`svd-tag svd-sev-${incident.severity}`}>
+                        {t(`severity_${incident.severity}`) || incident.severity}
+                      </span>
+                    </td>
+                    <td>
+                      {incident.evidence?.fusion.finalConfidence
+                        ? `${incident.evidence.fusion.finalConfidence}%`
+                        : incident.aiConfidence
+                          ? `${incident.aiConfidence}%`
+                          : EMPTY}
+                    </td>
+                    <td>{incident.timestamp ? getIncidentAge(incident.timestamp) : EMPTY}</td>
+                    <td className="svd-status">
+                      {incident.dispatchStatus === "dispatched" ? t("dash_dispatched") : formatStatus(incident.status)}
+                      {incident.workOrder && <span className="svd-mini-chip">{t("dash_work_order_ready")}</span>}
+                    </td>
+                    <td>
+                      <button type="button" className="svd-action" onClick={() => setSelectedId(incident.id)}>
+                        {t("dash_review")}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      <section className="svd-card svd-map-card">
+        <header className="svd-card-head svd-card-head-split">
+          <div>
+            <h2 className="vs-title">
+              <Icon name="pin" size={17} />
+              {t("dash_map")}
+            </h2>
+            <p>{t("dash_map_detail_ops")}</p>
+          </div>
+          <label className="svd-toggle">
+            <input type="checkbox" checked={showFires} onChange={(event) => setShowFires(event.target.checked)} />
+            {t("dash_show_fires")}
+          </label>
+        </header>
+        <div className="svd-map">
+          {/* Bare map only — the component's own header/sidebar belong to the
+              standalone /map page and carry that page's styling. */}
+          <GoogleHotspotMap
+            incidents={mapIncidents}
+            fires={showFires ? fireFeed?.fires : undefined}
+            mode="operations"
+            onIncidentSelect={setSelectedId}
+            selectedIncidentId={selectedId}
+            showHeader={false}
+            showSidebar={false}
+          />
+        </div>
+      </section>
+
       <div className="svd-grid">
+        <OperatorCopilot />
+
         <section className="svd-card svd-card-wide">
           <header className="svd-card-head">
-            <h2>{t("dash_hazard_mix")}</h2>
+            <h2 className="vs-title">
+              <Icon name="layers" size={17} />
+              {t("dash_hazard_mix")}
+            </h2>
             <p>{t("dash_hazard_mix_detail")}</p>
           </header>
           {active.length === 0 ? (
@@ -267,9 +426,40 @@ export default function DashboardView() {
           )}
         </section>
 
+        <section className="svd-card svd-card-wide">
+          <header className="svd-card-head">
+            <h2 className="vs-title">
+              <Icon name="flame" size={17} />
+              {t("dash_fires_title")}
+            </h2>
+            <p>{t("dash_fires_detail")}</p>
+          </header>
+          {!fireFeed ? (
+            <p className="svd-empty">{t("drawer_loading")}</p>
+          ) : fireFeed.error ? (
+            <p className="svd-empty">{t("dash_fires_unavailable")}</p>
+          ) : (
+            <>
+              <p className="svd-big-number">
+                {fireFeed.fires.length}
+                {fireFeed.truncated ? "+" : ""}
+                <span>{t("dash_fires_unit")}</span>
+              </p>
+              <p className="svd-note">
+                {t("dash_fires_window")
+                  .replace("{start}", new Date(fireFeed.windowStart).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }))
+                  .replace("{end}", new Date(fireFeed.windowEnd).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }))}
+              </p>
+            </>
+          )}
+        </section>
+
         <section className="svd-card">
           <header className="svd-card-head">
-            <h2>{t("dash_severity")}</h2>
+            <h2 className="vs-title">
+              <Icon name="alert" size={17} />
+              {t("dash_severity")}
+            </h2>
             <p>{t("dash_severity_detail")}</p>
           </header>
           <ul className="svd-split">
@@ -294,7 +484,10 @@ export default function DashboardView() {
 
         <section className="svd-card">
           <header className="svd-card-head">
-            <h2>{t("dash_sensor")}</h2>
+            <h2 className="vs-title">
+              <Icon name="station" size={17} />
+              {t("dash_sensor")}
+            </h2>
             <p>{sensor?.stationName ? sensor.stationName : t("dash_sensor_detail")}</p>
           </header>
           <ul className="svd-readings">
@@ -314,15 +507,22 @@ export default function DashboardView() {
             ))}
           </ul>
           <p className="svd-note">
-            {sensor?.lastUpdated
-              ? `${t("dash_sensor_updated")} ${new Date(sensor.lastUpdated).toLocaleString()}`
-              : t("dash_sensor_none")}
+            {sensorUpdatedMs !== null
+              ? `${t("dash_sensor_updated")} ${new Date(sensorUpdatedMs).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })}`
+              : sensor?.lastUpdated
+                ? `${t("dash_sensor_updated")} ${sensor.lastUpdated}`
+                : t("dash_sensor_none")}
           </p>
         </section>
 
+        <ModelQualityCard incidents={incidents} />
+
         <section className="svd-card svd-card-full">
           <header className="svd-card-head">
-            <h2>{t("dash_sources")}</h2>
+            <h2 className="vs-title">
+              <Icon name="database" size={17} />
+              {t("dash_sources")}
+            </h2>
             <p>{t("dash_sources_detail")}</p>
           </header>
           <ul className="svd-sources">
@@ -338,83 +538,20 @@ export default function DashboardView() {
         </section>
       </div>
 
-      <section className="svd-card svd-queue">
-        <header className="svd-card-head svd-card-head-split">
-          <div>
-            <h2>{t("dash_queue")}</h2>
-            <p>{t("dash_queue_detail")}</p>
-          </div>
-          <Link href="/report" className="sv-underline-link">
-            {t("nav_report_button")}
-          </Link>
-        </header>
+      {selectedTarget && (
+        <IncidentDrawer
+          key={selectedTarget.incident.id}
+          target={selectedTarget}
+          onClose={closeDrawer}
+          onToast={setToast}
+        />
+      )}
 
-        {rows.length === 0 ? (
-          <p className="svd-empty">{connected ? t("dash_queue_empty") : t("dash_no_signal")}</p>
-        ) : (
-          <div className="svd-table-scroll">
-            <table className="svd-table">
-              <thead>
-                <tr>
-                  <th scope="col">{t("dash_col_location")}</th>
-                  <th scope="col">{t("dash_col_hazard")}</th>
-                  <th scope="col">{t("dash_col_severity")}</th>
-                  <th scope="col">{t("dash_col_confidence")}</th>
-                  <th scope="col">{t("dash_col_age")}</th>
-                  <th scope="col">{t("dash_col_status")}</th>
-                  <th scope="col">{t("dash_col_action")}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((incident) => (
-                  <tr key={incident.id}>
-                    <td>{incident.neighborhood || EMPTY}</td>
-                    <td>{t(`hazard_${incident.hazardType}`)}</td>
-                    <td>
-                      <span className={`svd-tag svd-sev-${incident.severity}`}>
-                        {t(`severity_${incident.severity}`) || incident.severity}
-                      </span>
-                    </td>
-                    <td>{incident.aiConfidence ? `${incident.aiConfidence}%` : EMPTY}</td>
-                    <td>{incident.timestamp ? getIncidentAge(incident.timestamp) : EMPTY}</td>
-                    <td className="svd-status">{formatStatus(incident.status)}</td>
-                    <td>
-                      <button
-                        type="button"
-                        className="svd-action"
-                        onClick={() => handleDispatch(incident)}
-                        disabled={
-                          !db ||
-                          incident.dispatchStatus === "dispatched" ||
-                          dispatching === incident.id
-                        }
-                      >
-                        {incident.dispatchStatus === "dispatched"
-                          ? t("dash_dispatched")
-                          : dispatching === incident.id
-                            ? t("dispatch_dispatching")
-                            : t(getRecommendedActionKey(incident)) || getRecommendedAction(incident)}
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
-
-      <section className="svd-card svd-map-card">
-        <header className="svd-card-head">
-          <h2>{t("dash_map")}</h2>
-          <p>{t("dash_map_detail")}</p>
-        </header>
-        <div className="svd-map">
-          {/* Bare map only — the component's own header/sidebar belong to the
-              standalone /map page and carry that page's styling. */}
-          <GoogleHotspotMap mode="operations" showHeader={false} showSidebar={false} />
+      {toast && (
+        <div className="svd-toast" role="status">
+          {toast}
         </div>
-      </section>
+      )}
     </div>
   );
 }

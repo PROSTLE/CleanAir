@@ -1,4 +1,5 @@
 import DashboardView from "@/components/dashboard/DashboardView";
+import { OperatorProvider } from "@/components/dashboard/OperatorContext";
 import Navbar from "@/components/shared/Navbar";
 
 export default function DashboardPage() {
@@ -10,7 +11,9 @@ export default function DashboardPage() {
         </div>
       </div>
       <div className="app-page-container app-page-content">
-        <DashboardView />
+        <OperatorProvider>
+          <DashboardView />
+        </OperatorProvider>
       </div>
     </main>
   );
