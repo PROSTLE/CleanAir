@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import Icon from "@/components/shared/Icon";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { useT } from "@/lib/languageContext";
@@ -129,8 +130,8 @@ export default function PrioritySection() {
           {/* Top Floating HUD bar */}
           <div className="sv-priority-hud">
             <div className="sv-priority-hud-left">
-              <span className="sv-live-dot" />
-              <span className="sv-hud-title">OUR PRIORITY · {t("priority_heading")}</span>
+              <Icon name="hexagon" size={14} className="sv-hud-icon" />
+              <span className="sv-hud-title">{t("priority_heading")}</span>
             </div>
 
             <div className="sv-priority-hud-nav">
