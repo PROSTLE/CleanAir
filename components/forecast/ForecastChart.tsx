@@ -1,7 +1,7 @@
 "use client";
 
 import {
-  AreaChart,
+  ComposedChart,
   Area,
   Line,
   XAxis,
@@ -12,270 +12,258 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import type { ForecastResult, SensorReading } from "@/lib/forecastEngine";
-import { getAQIInfo } from "@/lib/forecastEngine";
+import { getAQIInfo, getIstHour } from "@/lib/forecastEngine";
 import { useT } from "@/lib/languageContext";
+
+/** An independent series drawn over the forecast horizon, matched by timestamp. */
+export type ComparisonPoint = { time: string; value: number | null };
 
 interface ForecastChartProps {
   forecast: ForecastResult;
   history: SensorReading[];
+  /** BigQuery ML ARIMA_PLUS forecast (live data only). */
+  arima?: ComparisonPoint[] | null;
+  /** Google Air Quality API hourly PM2.5 forecast. */
+  google?: ComparisonPoint[] | null;
 }
 
 interface ChartPoint {
+  key: string;
   label: string;
   actual?: number;
   predicted?: number;
-  confidenceBand?: number;
-  confidenceUpper?: number;
-  confidenceLower?: number;
+  arima?: number;
+  google?: number;
 }
 
-// ─── Custom glassmorphic tooltip ─────────────────────────────────────────
-function CustomTooltip({
+// Palette: ink for what was measured, brand green for our projection, and
+// two muted, clearly different hues for the independent comparisons.
+const COLOR = {
+  actual: "#1f2d26",
+  predicted: "#2c7d40",
+  arima: "#b7791f",
+  google: "#3b6e8f",
+  grid: "rgba(16, 26, 21, 0.07)",
+  axis: "#7b877f",
+};
+
+function valueAt(series: ComparisonPoint[] | null | undefined, time: string) {
+  if (!series?.length) return undefined;
+  const targetMs = Date.parse(time);
+  const match = series.find((point) => Math.abs(Date.parse(point.time) - targetMs) <= 30 * 60 * 1000);
+  return match?.value ?? undefined;
+}
+
+function ChartTooltip({
   active,
   payload,
-  label,
 }: {
   active?: boolean;
-  payload?: Array<{ name: string; value: number; color: string; payload: ChartPoint }>;
-  label?: string;
+  payload?: Array<{ payload: ChartPoint }>;
 }) {
   const t = useT();
   if (!active || !payload?.length) return null;
-
-  const pointData = payload[0]?.payload;
-  const isForecast = pointData?.predicted !== undefined;
-  const pmValue = isForecast ? pointData.predicted : pointData?.actual;
-  const aqi = pmValue !== undefined ? getAQIInfo(pmValue) : null;
+  const point = payload[0].payload;
+  const isForecast = point.actual === undefined;
+  const value = isForecast ? point.predicted : point.actual;
+  const aqi = value !== undefined ? getAQIInfo(value) : null;
 
   return (
-    <div className="forecast-custom-tooltip">
-      <div className="tooltip-header">
-        <span className="tooltip-time-badge">{label}</span>
-        <span className={`tooltip-type-pill ${isForecast ? "forecast-type" : "actual-type"}`}>
-          {isForecast ? "24h Forecast" : "Recorded Sensor"}
-        </span>
-      </div>
-
-      <div className="tooltip-body">
-        <div className="tooltip-main-metric">
-          <span className="tooltip-metric-val" style={{ color: aqi?.color || "#101a15" }}>
-            {pmValue}
-          </span>
-          <span className="tooltip-metric-unit">µg/m³ PM2.5</span>
-        </div>
-
-        {aqi && (
-          <div className="tooltip-aqi-tag" style={{ borderColor: aqi.color, color: aqi.color }}>
-            <span className="tooltip-aqi-dot" style={{ background: aqi.color }} />
-            {aqi.category}
-          </div>
-        )}
-      </div>
-
-      {isForecast && pointData.confidenceBand && (
-        <div className="tooltip-footer">
-          <span>Confidence Variance:</span>
-          <strong>±{pointData.confidenceBand} µg/m³</strong>
-        </div>
+    <div className="fc-tooltip">
+      <p className="fc-tooltip-head">
+        <span>{point.label} IST</span>
+        <span>{isForecast ? t("forecast_chart_legend_forecast") : t("forecast_chart_legend_actual")}</span>
+      </p>
+      {value !== undefined && (
+        <p className="fc-tooltip-value">
+          {value}
+          <small>µg/m³</small>
+        </p>
+      )}
+      {aqi && (
+        <p className="fc-tooltip-aqi">
+          <span style={{ background: aqi.color }} aria-hidden="true" />
+          {t(aqi.category)}
+        </p>
+      )}
+      {(point.arima !== undefined || point.google !== undefined) && (
+        <dl className="fc-tooltip-compare">
+          {point.arima !== undefined && (
+            <div>
+              <dt>{t("forecast_legend_arima")}</dt>
+              <dd>{point.arima}</dd>
+            </div>
+          )}
+          {point.google !== undefined && (
+            <div>
+              <dt>{t("forecast_legend_google")}</dt>
+              <dd>{point.google}</dd>
+            </div>
+          )}
+        </dl>
       )}
     </div>
   );
 }
 
-// ─── Glowing confidence dot renderer ─────────────────────────────────────
-function ConfidenceDot(props: {
-  cx?: number;
-  cy?: number;
-  payload?: ChartPoint;
-}) {
-  const { cx, cy, payload } = props;
-  if (!payload?.predicted || cx === undefined || cy === undefined) return null;
-
-  const aqi = getAQIInfo(payload.predicted);
-  return (
-    <g>
-      <circle cx={cx} cy={cy} r={6} fill={aqi.color} opacity={0.25} />
-      <circle cx={cx} cy={cy} r={3.5} fill={aqi.color} stroke="#ffffff" strokeWidth={1.5} />
-    </g>
-  );
-}
-
-export default function ForecastChart({ forecast, history }: ForecastChartProps) {
+export default function ForecastChart({ forecast, history, arima, google }: ForecastChartProps) {
   const t = useT();
   const points: ChartPoint[] = [];
 
-  // Historical actuals — last 12 readings (1 per hour)
+  // Last 12 measured hours, then the 24-hour projection. Keys are unique so
+  // the "Now" marker can sit exactly between the two.
   const recentHistory = [...history]
-    .sort((a, b) => new Date(a.sampledAt).getTime() - new Date(b.sampledAt).getTime())
+    .filter((reading) => reading.sensor_pm25 !== null)
+    .sort((a, b) => Date.parse(a.sampledAt) - Date.parse(b.sampledAt))
     .slice(-12);
 
-  for (const r of recentHistory) {
-    if (r.sensor_pm25 === null) continue;
-    const d = new Date(r.sampledAt);
-    const label = `${String(d.getHours()).padStart(2, "0")}:00`;
-    points.push({ label, actual: Math.round(r.sensor_pm25) });
-  }
+  recentHistory.forEach((reading, index) => {
+    const label = `${String(getIstHour(new Date(reading.sampledAt))).padStart(2, "0")}:00`;
+    points.push({ key: `h${index}`, label, actual: Math.round(reading.sensor_pm25 as number) });
+  });
 
-  // Bridge point between actual and forecast for seamless graph continuity
-  if (points.length > 0 && forecast.forecast.length > 0) {
-    const lastActual = points[points.length - 1];
-    // Attach starting prediction value to last historical hour so line connects smoothly
-    lastActual.predicted = lastActual.actual;
-  }
+  const nowKey = points.length ? points[points.length - 1].key : undefined;
+  // The projection starts from the last measured value so the lines join.
+  if (points.length) points[points.length - 1].predicted = points[points.length - 1].actual;
 
-  // Forecast points
-  for (const f of forecast.forecast) {
-    const band =
-      f.confidence === "high"
-        ? Math.round(f.predicted_pm25 * 0.1)
-        : f.confidence === "medium"
-        ? Math.round(f.predicted_pm25 * 0.2)
-        : Math.round(f.predicted_pm25 * 0.35);
-
+  forecast.forecast.forEach((point, index) => {
     points.push({
-      label: f.hour,
-      predicted: f.predicted_pm25,
-      confidenceBand: band,
-      confidenceUpper: f.predicted_pm25 + band,
-      confidenceLower: Math.max(0, f.predicted_pm25 - band),
+      key: `f${index}`,
+      label: point.hour,
+      predicted: point.predicted_pm25,
+      arima: valueAt(arima, point.time),
+      google: valueAt(google, point.time),
     });
-  }
+  });
 
-  const maxVal = Math.max(
-    ...points.map((p) => p.actual ?? 0),
-    ...points.map((p) => (p.predicted ?? 0) + (p.confidenceBand ?? 0)),
-    80
+  const maxValue = Math.max(
+    80,
+    ...points.map((point) => Math.max(point.actual ?? 0, point.predicted ?? 0, point.arima ?? 0, point.google ?? 0)),
   );
+  const labelByKey = new Map(points.map((point) => [point.key, point.label]));
 
   return (
-    <div className="forecast-chart-card">
-      <div className="forecast-chart-canvas-wrap">
-        <ResponsiveContainer width="100%" height={320}>
-          <AreaChart data={points} margin={{ top: 20, right: 24, left: 0, bottom: 8 }}>
-            <defs>
-              <linearGradient id="actualGradient" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="#117c72" stopOpacity={0.28} />
-                <stop offset="95%" stopColor="#117c72" stopOpacity={0.0} />
-              </linearGradient>
-              <linearGradient id="forecastGradient" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="#6366f1" stopOpacity={0.22} />
-                <stop offset="95%" stopColor="#6366f1" stopOpacity={0.0} />
-              </linearGradient>
-            </defs>
+    <div className="fc-chart">
+      <ResponsiveContainer width="100%" height={320}>
+        <ComposedChart data={points} margin={{ top: 16, right: 12, left: -8, bottom: 4 }}>
+          <defs>
+            <linearGradient id="fcActualFill" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={COLOR.predicted} stopOpacity={0.16} />
+              <stop offset="100%" stopColor={COLOR.predicted} stopOpacity={0} />
+            </linearGradient>
+          </defs>
 
-            <CartesianGrid
-              strokeDasharray="3 3"
-              stroke="rgba(16, 26, 21, 0.07)"
-              vertical={false}
-            />
+          <CartesianGrid stroke={COLOR.grid} vertical={false} />
 
-            <XAxis
-              dataKey="label"
-              tick={{ fontSize: 11, fill: "#6d7b73", fontWeight: 600 }}
-              tickLine={false}
-              axisLine={{ stroke: "rgba(16, 26, 21, 0.1)" }}
-              interval={2}
-              dy={6}
-            />
+          <XAxis
+            dataKey="key"
+            tickFormatter={(key: string) => labelByKey.get(key) ?? ""}
+            tick={{ fontSize: 11, fill: COLOR.axis }}
+            tickLine={false}
+            axisLine={{ stroke: "rgba(16, 26, 21, 0.12)" }}
+            interval={2}
+            dy={6}
+          />
+          <YAxis
+            domain={[0, Math.ceil((maxValue * 1.12) / 50) * 50]}
+            tick={{ fontSize: 11, fill: COLOR.axis }}
+            tickLine={false}
+            axisLine={false}
+            width={44}
+          />
 
-            <YAxis
-              domain={[0, Math.ceil(maxVal * 1.15 / 50) * 50]}
-              tick={{ fontSize: 11, fill: "#6d7b73", fontWeight: 600 }}
-              tickLine={false}
-              axisLine={false}
-              tickFormatter={(v) => `${v}`}
-              width={42}
-            />
+          <Tooltip content={<ChartTooltip />} cursor={{ stroke: "rgba(16, 26, 21, 0.18)", strokeWidth: 1 }} />
 
-            <Tooltip content={<CustomTooltip />} />
-
-            {/* WHO Guideline Standard (15 µg/m³) */}
+          <ReferenceLine
+            y={60}
+            stroke="#c9a45e"
+            strokeDasharray="2 4"
+            label={{ value: t("forecast_chart_legend_naaqs"), fontSize: 10, fill: "#8a6a2e", position: "insideTopLeft" }}
+          />
+          <ReferenceLine
+            y={15}
+            stroke="#9fc5a7"
+            strokeDasharray="2 4"
+            label={{ value: t("forecast_chart_legend_who"), fontSize: 10, fill: "#4f7a58", position: "insideTopLeft" }}
+          />
+          {nowKey && (
             <ReferenceLine
-              y={15}
-              stroke="#22c55e"
-              strokeDasharray="4 4"
-              strokeWidth={1.5}
-              label={{
-                value: "WHO Guideline (15 µg/m³)",
-                fontSize: 10,
-                fill: "#15803d",
-                fontWeight: 700,
-                position: "insideBottomRight",
-                dy: -4,
-              }}
+              x={nowKey}
+              stroke="rgba(16, 26, 21, 0.35)"
+              label={{ value: t("fc_chart_now"), fontSize: 10, fill: COLOR.actual, position: "top" }}
             />
+          )}
 
-            {/* National Ambient Air Quality Standard (60 µg/m³) */}
-            <ReferenceLine
-              y={60}
-              stroke="#eab308"
-              strokeDasharray="4 4"
-              strokeWidth={1.5}
-              label={{
-                value: "India NAAQS Standard (60 µg/m³)",
-                fontSize: 10,
-                fill: "#a16207",
-                fontWeight: 700,
-                position: "insideBottomRight",
-                dy: -4,
-              }}
-            />
-
-            {/* Historical Actuals Area & Line */}
-            <Area
+          <Area
+            type="monotone"
+            dataKey="actual"
+            stroke={COLOR.actual}
+            strokeWidth={2}
+            fill="url(#fcActualFill)"
+            dot={false}
+            activeDot={{ r: 4, fill: COLOR.actual, stroke: "#fff", strokeWidth: 2 }}
+            isAnimationActive={false}
+          />
+          <Line
+            type="monotone"
+            dataKey="predicted"
+            stroke={COLOR.predicted}
+            strokeWidth={2}
+            strokeDasharray="6 4"
+            dot={false}
+            activeDot={{ r: 4, fill: COLOR.predicted, stroke: "#fff", strokeWidth: 2 }}
+            connectNulls
+            isAnimationActive={false}
+          />
+          {arima?.length ? (
+            <Line
               type="monotone"
-              dataKey="actual"
-              name="actual"
-              stroke="#117c72"
-              strokeWidth={3}
-              fill="url(#actualGradient)"
-              activeDot={{ r: 6, fill: "#117c72", stroke: "#ffffff", strokeWidth: 2 }}
-              connectNulls={false}
-            />
-
-            {/* Forecast Area & Dotted Line */}
-            <Area
-              type="monotone"
-              dataKey="predicted"
-              name="predicted"
-              stroke="#6366f1"
-              strokeWidth={2.5}
-              strokeDasharray="5 4"
-              fill="url(#forecastGradient)"
-              dot={<ConfidenceDot />}
-              activeDot={{ r: 6, fill: "#6366f1", stroke: "#ffffff", strokeWidth: 2 }}
+              dataKey="arima"
+              stroke={COLOR.arima}
+              strokeWidth={1.6}
+              dot={false}
               connectNulls
+              isAnimationActive={false}
             />
-          </AreaChart>
-        </ResponsiveContainer>
-      </div>
+          ) : null}
+          {google?.length ? (
+            <Line
+              type="monotone"
+              dataKey="google"
+              stroke={COLOR.google}
+              strokeWidth={1.6}
+              strokeDasharray="1 3"
+              strokeLinecap="round"
+              dot={false}
+              connectNulls
+              isAnimationActive={false}
+            />
+          ) : null}
+        </ComposedChart>
+      </ResponsiveContainer>
 
-      {/* Enhanced Chart Legend */}
-      <div className="forecast-chart-legend-bar">
-        <div className="legend-group">
-          <div className="legend-chip">
-            <span className="legend-bullet" style={{ background: "#117c72" }} />
-            <span className="legend-text">{t("forecast_chart_legend_actual")}</span>
-          </div>
-
-          <div className="legend-chip">
-            <span className="legend-dashed-bullet" />
-            <span className="legend-text">{t("forecast_chart_legend_forecast")}</span>
-          </div>
-        </div>
-
-        <div className="legend-group">
-          <div className="legend-chip threshold-who">
-            <span className="legend-bullet" style={{ background: "#22c55e" }} />
-            <span className="legend-text">{t("forecast_chart_legend_who")}</span>
-          </div>
-
-          <div className="legend-chip threshold-naaqs">
-            <span className="legend-bullet" style={{ background: "#eab308" }} />
-            <span className="legend-text">{t("forecast_chart_legend_naaqs")}</span>
-          </div>
-        </div>
-      </div>
+      <ul className="fc-legend">
+        <li>
+          <span className="fc-swatch" style={{ borderTopColor: COLOR.actual }} />
+          {t("forecast_chart_legend_actual")}
+        </li>
+        <li>
+          <span className="fc-swatch is-dashed" style={{ borderTopColor: COLOR.predicted }} />
+          {t("forecast_chart_legend_forecast")}
+        </li>
+        {arima?.length ? (
+          <li>
+            <span className="fc-swatch" style={{ borderTopColor: COLOR.arima }} />
+            {t("forecast_legend_arima")}
+          </li>
+        ) : null}
+        {google?.length ? (
+          <li>
+            <span className="fc-swatch is-dotted" style={{ borderTopColor: COLOR.google }} />
+            {t("forecast_legend_google")}
+          </li>
+        ) : null}
+      </ul>
     </div>
   );
 }
