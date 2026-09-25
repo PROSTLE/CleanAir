@@ -3,6 +3,7 @@
 import HeroSection from "@/components/landing/HeroSection";
 import PrioritySection from "@/components/landing/PrioritySection";
 import MethodSection from "@/components/landing/MethodSection";
+import CapabilitiesSection from "@/components/landing/CapabilitiesSection";
 import OperationsSection from "@/components/landing/OperationsSection";
 import LiveReports from "@/components/landing/LiveReports";
 import ManifestoBanner from "@/components/landing/ManifestoBanner";
@@ -17,6 +18,7 @@ export default function Hero() {
     { id: "top", label: t("rail_top") },
     { id: "priority", label: t("rail_priority") },
     { id: "method", label: t("rail_method") },
+    { id: "capabilities", label: t("rail_capabilities") },
     { id: "operations", label: t("rail_operations") },
     { id: "reports", label: t("rail_reports") },
   ];
@@ -43,6 +45,7 @@ export default function Hero() {
       <div className="sv-container">
         <PrioritySection />
         <MethodSection />
+        <CapabilitiesSection />
         <OperationsSection />
         <LiveReports />
       </div>
