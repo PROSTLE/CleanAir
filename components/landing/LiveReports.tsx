@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { collection, limit, onSnapshot, orderBy, query } from "firebase/firestore";
 import HotspotPreview from "@/components/landing/HotspotPreview";
+import LiveIndicator from "@/components/shared/LiveIndicator";
 import { db, isFirebaseConfigured } from "@/lib/firebase";
 import { hasPollutionSignal, reportToIncident, type FirestoreReport } from "@/lib/firestoreReports";
 import type { Incident } from "@/lib/types";
@@ -80,10 +81,10 @@ export default function LiveReports() {
     <section id="reports" className="sv-section sv-reports">
       <header className="sv-section-head sv-section-head-split">
         <div>
-          <p className="sv-eyebrow">
-            <span className={`sv-live-dot ${connected ? "is-live" : ""}`} aria-hidden="true" />
-            {connected ? t("reports_kicker_live") : t("reports_kicker_idle")}
-          </p>
+          <LiveIndicator
+            state={connected ? "live" : isFirebaseConfigured ? "connecting" : "offline"}
+            label={connected ? t("reports_kicker_live") : t("reports_kicker_idle")}
+          />
           <h2>{t("reports_heading")}</h2>
         </div>
         <Link href="/report" className="sv-pill sv-pill-dark">

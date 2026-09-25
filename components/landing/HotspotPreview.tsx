@@ -62,6 +62,7 @@ export default function HotspotPreview({ incidents }: { incidents: Incident[] })
     markerRefs.current = [];
 
     incidents.forEach((incident) => {
+      if (!Number.isFinite(incident.latitude) || !Number.isFinite(incident.longitude)) return;
       const color = severityColor[incident.severity] || severityColor.medium;
       const marker = new maps.Marker({
         map: mapRef.current,
