@@ -22,9 +22,25 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# local env files
-.env
-.env*.local
+# env files (all variants — .env.production etc. can hold real keys)
+.env*
+!.env.example
+
+# service account keys (Earth Engine, Translation) — never commit
+credentials/
+*-service-account*.json
+
+# air quality data / python
+/ml/*.csv
+.venv
+__pycache__/
+*.py[cod]
+
+# pnpm store
+.pnpm-store/
+
+# uploaded / generated public assets
+/public/uploads/
 
 # vercel
 .vercel
@@ -32,3 +48,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# classifier evaluation photos (keep the README)
+/eval/photos/*
