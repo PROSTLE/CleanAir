@@ -1016,20 +1016,6 @@
   border-top: 1px solid var(--sv-line);
 }
 
-.sv-live-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: #c3cbc2;
-  flex: none;
-}
-
-.sv-live-dot.is-live {
-  background: var(--sv-green);
-  box-shadow: 0 0 0 0 rgba(63, 168, 86, 0.5);
-  animation: sv-ping 2.2s ease-out infinite;
-}
-
 @keyframes sv-ping {
   70% {
     box-shadow: 0 0 0 8px rgba(63, 168, 86, 0);

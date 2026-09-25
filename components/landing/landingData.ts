@@ -22,11 +22,12 @@ export const workflowSteps = [
   },
 ];
 
+// Only services the code actually calls.
 export const techStack = [
-  "Gemini multimodal",
-  "Google Maps",
-  "Earth Engine",
-  "Firebase",
-  "BigQuery",
-  "Vertex AI",
+  "Gemini (vision + function calling)",
+  "Google Maps · Places · Air Quality",
+  "Earth Engine · Sentinel-5P · FIRMS",
+  "BigQuery · BigQuery ML",
+  "Firebase Auth · Firestore · App Check",
+  "Speech-to-Text",
 ];
