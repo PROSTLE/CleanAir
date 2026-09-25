@@ -1,5 +1,5 @@
 import Navbar from "@/components/shared/Navbar";
-import GoogleHotspotMap from "@/components/map/GoogleHotspotMap";
+import PublicMapView from "@/components/map/PublicMapView";
 
 export default function MapPage() {
   return (
@@ -10,7 +10,7 @@ export default function MapPage() {
         </div>
       </div>
       <div className="app-page-container app-page-content map-page-content">
-        <GoogleHotspotMap />
+        <PublicMapView />
       </div>
     </main>
   );
