@@ -3,23 +3,39 @@ import "server-only";
 import * as ee from "@google/earthengine";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { getH3CellId } from "@/lib/reportSubmissions";
+import { getH3CellId, haversineKm } from "@/lib/geo";
 
 const EE_KEY_PATH = path.join(process.cwd(), "credentials", "earth-engine-key.json");
-const NO2_COLLECTION = "COPERNICUS/S5P/OFFL/L3_NO2";
+// Near-real-time products appear within hours of the overpass; the offline
+// (OFFL) reprocessing lags by days. The *current* window reads NRTI so a
+// report is compared against today's column, with OFFL as a fallback. The
+// 90-day *baseline* keeps OFFL, which is the better-calibrated archive.
+const NO2_CURRENT_COLLECTIONS = ["COPERNICUS/S5P/NRTI/L3_NO2", "COPERNICUS/S5P/OFFL/L3_NO2"];
+const NO2_BASELINE_COLLECTION = "COPERNICUS/S5P/OFFL/L3_NO2";
 const NO2_BAND = "tropospheric_NO2_column_number_density";
-const AEROSOL_COLLECTION = "COPERNICUS/S5P/OFFL/L3_AER_AI";
+const AEROSOL_CURRENT_COLLECTIONS = ["COPERNICUS/S5P/NRTI/L3_AER_AI", "COPERNICUS/S5P/OFFL/L3_AER_AI"];
+const AEROSOL_BASELINE_COLLECTION = "COPERNICUS/S5P/OFFL/L3_AER_AI";
 const AEROSOL_BAND = "absorbing_aerosol_index";
+// NASA FIRMS active-fire detections (MODIS), 1 km, published in Earth Engine.
+const FIRMS_COLLECTION = "FIRMS";
 const CACHE_TTL_MS = 3 * 60 * 60 * 1000;
+const FIRE_CACHE_TTL_MS = 60 * 60 * 1000;
 const REQUEST_TIMEOUT_MS = 20_000;
+const FIRE_REQUEST_TIMEOUT_MS = 45_000;
 const CURRENT_WINDOW_DAYS = 3;
 const BASELINE_WINDOW_DAYS = 90;
 const SAMPLE_BUFFER_METERS = 1500;
+const FIRE_WINDOW_HOURS = 48;
+const MAX_FIRE_POINTS = 800;
+
+// Punjab + Haryana + Delhi NCR: the region whose crop-residue and waste fires
+// drive Delhi's autumn smog episodes. [minLng, minLat, maxLng, maxLat]
+export const FIRE_REGION_BOUNDS = [73.8, 27.8, 78.2, 32.6] as const;
 
 // Scores compare the current 3-day median to the same point's previous
 // 90-day median. A short current window reacts faster to acute events
 // (e.g. a smog trap at a junction) while still smoothing over Sentinel-5P's
-// cloud-cover/revisit gaps; the 120-day baseline stays long so slow-building
+// cloud-cover/revisit gaps; the 90-day baseline stays long so slow-building
 // hotspots (industrial clusters, recurring landfill fires) still register.
 // NO2 reaches 1.0 at about +150% over local baseline; Aerosol
 // Index reaches 1.0 at about +1.5 positive AI units over local baseline.
@@ -59,6 +75,8 @@ export type SatelliteDataResult = {
     fireDustSmoke: number;
     industrialTraffic: number;
   };
+  /** Which collection produced the current-window value (NRTI or OFFL). */
+  currentProduct: { no2: string | null; aerosolIndex: string | null };
   source: "Earth Engine / Sentinel-5P";
   computedAt: string;
   windowStart: string;
@@ -69,24 +87,42 @@ export type SatelliteDataResult = {
   error?: string;
 };
 
+export type FireHotspot = {
+  lat: number;
+  lng: number;
+  /** MODIS band-21 brightness temperature (Kelvin). */
+  brightnessK: number | null;
+  /** FIRMS detection confidence, 0-100. */
+  confidence: number | null;
+};
+
+export type FireHotspotResult = {
+  fires: FireHotspot[];
+  windowStart: string;
+  windowEnd: string;
+  bounds: typeof FIRE_REGION_BOUNDS;
+  truncated: boolean;
+  source: "NASA FIRMS via Earth Engine";
+  computedAt: string;
+  error?: string;
+};
+
 type CacheEntry = {
   expiresAt: number;
   value: SatelliteDataResult;
 };
 
 const cache = new Map<string, CacheEntry>();
+let fireCache: { expiresAt: number; value: FireHotspotResult } | null = null;
+let fireInFlight: Promise<FireHotspotResult> | null = null;
 let initPromise: Promise<void> | null = null;
 
-function getBaseCacheKey(lat: number, lng: number) {
-  return getH3CellId({
-    label: "Satellite sample",
-    lat: String(lat),
-    lng: String(lng),
-  });
-}
-
 function getCacheKey(lat: number, lng: number, windowEndDate: string) {
-  return `${getBaseCacheKey(lat, lng)}-${windowEndDate}`;
+  const cell =
+    Number.isFinite(lat) && Number.isFinite(lng)
+      ? getH3CellId({ lat, lng })
+      : `invalid-${lat}-${lng}`;
+  return `${cell}-${windowEndDate}`;
 }
 
 function clampScore(value: number) {
@@ -122,12 +158,15 @@ function normalizeAerosolChronicScore(rawValue: number | null) {
 }
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string) {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
   return Promise.race([
     promise,
     new Promise<T>((_, reject) => {
-      setTimeout(() => reject(new Error(`${label} timed out.`)), ms);
+      timeoutId = setTimeout(() => reject(new Error(`${label} timed out.`)), ms);
     }),
-  ]);
+  ]).finally(() => {
+    if (timeoutId) clearTimeout(timeoutId);
+  });
 }
 
 function authenticateViaPrivateKey(key: EarthEngineKey) {
@@ -155,16 +194,41 @@ function initializeEarthEngine(projectId?: string) {
   });
 }
 
+/**
+ * The service-account key comes from EARTH_ENGINE_SERVICE_ACCOUNT_KEY (raw
+ * JSON or base64 — the form App Hosting / Secret Manager can inject), else
+ * from the local, gitignored credentials/earth-engine-key.json used in dev.
+ */
+async function loadEarthEngineKey(): Promise<EarthEngineKey> {
+  const fromEnv = process.env.EARTH_ENGINE_SERVICE_ACCOUNT_KEY?.trim();
+  if (fromEnv) {
+    const json = fromEnv.startsWith("{")
+      ? fromEnv
+      : Buffer.from(fromEnv, "base64").toString("utf8");
+    return JSON.parse(json) as EarthEngineKey;
+  }
+  try {
+    return JSON.parse(await readFile(EE_KEY_PATH, "utf8")) as EarthEngineKey;
+  } catch {
+    // Don't surface filesystem paths in API responses.
+    throw new Error("Earth Engine is not configured (set EARTH_ENGINE_SERVICE_ACCOUNT_KEY).");
+  }
+}
+
+export function isEarthEngineKeyConfigured(fileExists: boolean) {
+  return Boolean(process.env.EARTH_ENGINE_SERVICE_ACCOUNT_KEY?.trim()) || fileExists;
+}
+
 async function ensureEarthEngineReady() {
   if (!initPromise) {
     initPromise = (async () => {
-      const key = JSON.parse(await readFile(EE_KEY_PATH, "utf8")) as EarthEngineKey;
+      const key = await loadEarthEngineKey();
       if (!key.client_email || !key.private_key) {
         throw new Error("Earth Engine service account key is missing required fields.");
       }
 
       await authenticateViaPrivateKey(key);
-      await initializeEarthEngine(key.project_id);
+      await initializeEarthEngine(process.env.EARTH_ENGINE_PROJECT_ID ?? key.project_id);
     })().catch((error) => {
       initPromise = null;
       throw error;
@@ -212,6 +276,7 @@ function buildFallback(
       fireDustSmoke: 0,
       industrialTraffic: 0,
     },
+    currentProduct: { no2: null, aerosolIndex: null },
     source: "Earth Engine / Sentinel-5P",
     computedAt,
     windowStart,
@@ -254,13 +319,35 @@ async function reduceMedianBand(
   return typeof raw === "number" && Number.isFinite(raw) ? raw : null;
 }
 
+/** First collection (NRTI, then OFFL) that has an unmasked value wins. */
+async function reduceCurrentBand(
+  collections: string[],
+  band: string,
+  region: unknown,
+  startDate: string,
+  endDate: string,
+  label: string,
+) {
+  for (const collectionId of collections) {
+    try {
+      const value = await reduceMedianBand(collectionId, band, region, startDate, endDate, label);
+      if (value !== null) return { value, product: collectionId };
+    } catch (error) {
+      console.warn(`${label} unavailable from ${collectionId}`, error instanceof Error ? error.message : error);
+    }
+  }
+  return { value: null, product: null };
+}
+
 export async function getSatelliteDataForPoint(
   lat: number,
   lng: number,
   referenceTime: Date = new Date(),
 ): Promise<SatelliteDataResult> {
   const end = Number.isFinite(referenceTime.getTime()) ? referenceTime : new Date();
-  const endDate = end.toISOString().slice(0, 10);
+  // filterDate's end is exclusive; include the reference day itself.
+  const endExclusive = new Date(end.getTime() + 24 * 60 * 60 * 1000);
+  const endDate = endExclusive.toISOString().slice(0, 10);
   const currentStart = new Date(
     end.getTime() - CURRENT_WINDOW_DAYS * 24 * 60 * 60 * 1000,
   );
@@ -284,40 +371,14 @@ export async function getSatelliteDataForPoint(
     const baselineStartDate = baselineStart.toISOString().slice(0, 10);
 
     const region = ee.Geometry.Point([lng, lat]).buffer(SAMPLE_BUFFER_METERS);
-    const [no2Raw, no2Baseline, aerosolRaw, aerosolBaseline] = await Promise.all([
-      reduceMedianBand(
-        NO2_COLLECTION,
-        NO2_BAND,
-        region,
-        currentStartDate,
-        endDate,
-        "NO2 current",
-      ),
-      reduceMedianBand(
-        NO2_COLLECTION,
-        NO2_BAND,
-        region,
-        baselineStartDate,
-        currentStartDate,
-        "NO2 baseline",
-      ),
-      reduceMedianBand(
-        AEROSOL_COLLECTION,
-        AEROSOL_BAND,
-        region,
-        currentStartDate,
-        endDate,
-        "Aerosol Index current",
-      ),
-      reduceMedianBand(
-        AEROSOL_COLLECTION,
-        AEROSOL_BAND,
-        region,
-        baselineStartDate,
-        currentStartDate,
-        "Aerosol Index baseline",
-      ),
+    const [no2Current, no2Baseline, aerosolCurrent, aerosolBaseline] = await Promise.all([
+      reduceCurrentBand(NO2_CURRENT_COLLECTIONS, NO2_BAND, region, currentStartDate, endDate, "NO2 current"),
+      reduceMedianBand(NO2_BASELINE_COLLECTION, NO2_BAND, region, baselineStartDate, currentStartDate, "NO2 baseline"),
+      reduceCurrentBand(AEROSOL_CURRENT_COLLECTIONS, AEROSOL_BAND, region, currentStartDate, endDate, "Aerosol Index current"),
+      reduceMedianBand(AEROSOL_BASELINE_COLLECTION, AEROSOL_BAND, region, baselineStartDate, currentStartDate, "Aerosol Index baseline"),
     ]);
+    const no2Raw = no2Current.value;
+    const aerosolRaw = aerosolCurrent.value;
 
     if (no2Raw === null && aerosolRaw === null) {
       throw new Error(
@@ -355,6 +416,7 @@ export async function getSatelliteDataForPoint(
         fireDustSmoke: fireDustSmokeWeight,
         industrialTraffic: industrialTrafficWeight,
       },
+      currentProduct: { no2: no2Current.product, aerosolIndex: aerosolCurrent.product },
       source: "Earth Engine / Sentinel-5P",
       computedAt,
       windowStart: currentStartDate,
@@ -378,4 +440,123 @@ export async function getSatelliteDataForPoint(
       endDate,
     );
   }
+}
+
+type SampledFeatureCollection = {
+  features?: Array<{
+    geometry?: { coordinates?: [number, number] };
+    properties?: { T21?: number; confidence?: number };
+  }>;
+};
+
+async function fetchRegionalFireHotspots(): Promise<FireHotspotResult> {
+  const end = new Date();
+  const start = new Date(end.getTime() - FIRE_WINDOW_HOURS * 60 * 60 * 1000);
+  const windowStart = start.toISOString();
+  const windowEnd = end.toISOString();
+  const computedAt = end.toISOString();
+
+  try {
+    await withTimeout(ensureEarthEngineReady(), REQUEST_TIMEOUT_MS, "Earth Engine auth");
+    const [minLng, minLat, maxLng, maxLat] = FIRE_REGION_BOUNDS;
+    const region = ee.Geometry.Rectangle([minLng, minLat, maxLng, maxLat]);
+    // FIRMS images are masked everywhere except fire pixels, so sampling the
+    // max composite returns one feature per detected fire pixel.
+    const composite = ee
+      .ImageCollection(FIRMS_COLLECTION)
+      .filterDate(windowStart.slice(0, 10), new Date(end.getTime() + 86_400_000).toISOString().slice(0, 10))
+      .filterBounds(region)
+      .select(["T21", "confidence"])
+      .max();
+    const samples = composite
+      .sample({ region, scale: 1000, geometries: true, dropNulls: true })
+      .limit(MAX_FIRE_POINTS + 1);
+
+    const collection = await withTimeout(
+      getInfo<SampledFeatureCollection>(samples),
+      FIRE_REQUEST_TIMEOUT_MS,
+      "Earth Engine FIRMS sample",
+    );
+    const fires = (collection.features ?? [])
+      .map((feature) => {
+        const [lng, lat] = feature.geometry?.coordinates ?? [];
+        return {
+          lat: Number(lat),
+          lng: Number(lng),
+          brightnessK: typeof feature.properties?.T21 === "number" ? feature.properties.T21 : null,
+          confidence:
+            typeof feature.properties?.confidence === "number" ? feature.properties.confidence : null,
+        };
+      })
+      .filter((fire) => Number.isFinite(fire.lat) && Number.isFinite(fire.lng));
+
+    return {
+      fires: fires.slice(0, MAX_FIRE_POINTS),
+      windowStart,
+      windowEnd,
+      bounds: FIRE_REGION_BOUNDS,
+      truncated: fires.length > MAX_FIRE_POINTS,
+      source: "NASA FIRMS via Earth Engine",
+      computedAt,
+    };
+  } catch (error) {
+    return {
+      fires: [],
+      windowStart,
+      windowEnd,
+      bounds: FIRE_REGION_BOUNDS,
+      truncated: false,
+      source: "NASA FIRMS via Earth Engine",
+      computedAt,
+      error: error instanceof Error ? error.message : "Unknown Earth Engine error.",
+    };
+  }
+}
+
+/** Active fires across Punjab/Haryana/Delhi over the last 48 h, cached 1 h. */
+export async function getRegionalFireHotspots(options: { refresh?: boolean } = {}) {
+  if (!options.refresh && fireCache && fireCache.expiresAt > Date.now()) {
+    return fireCache.value;
+  }
+  fireInFlight ??= fetchRegionalFireHotspots().finally(() => {
+    fireInFlight = null;
+  });
+  const value = await fireInFlight;
+  // Don't pin an error for an hour; retry on the next request instead.
+  if (!value.error) {
+    fireCache = { expiresAt: Date.now() + FIRE_CACHE_TTL_MS, value };
+  }
+  return value;
+}
+
+export type NearbyFireSummary = {
+  count: number;
+  nearestKm: number | null;
+  maxBrightnessK: number | null;
+  radiusKm: number;
+  windowStart: string;
+  windowEnd: string;
+  error?: string;
+};
+
+export async function getFiresNear(lat: number, lng: number, radiusKm = 5): Promise<NearbyFireSummary> {
+  const regional = await getRegionalFireHotspots();
+  const nearby = regional.fires
+    .map((fire) => ({ ...fire, distanceKm: haversineKm(lat, lng, fire.lat, fire.lng) }))
+    .filter((fire) => fire.distanceKm <= radiusKm);
+  return {
+    count: nearby.length,
+    nearestKm: nearby.length
+      ? Number(Math.min(...nearby.map((fire) => fire.distanceKm)).toFixed(2))
+      : null,
+    maxBrightnessK: nearby.reduce<number | null>(
+      (max, fire) =>
+        fire.brightnessK !== null && (max === null || fire.brightnessK > max) ? fire.brightnessK : max,
+      null,
+    ),
+    radiusKm,
+    windowStart: regional.windowStart,
+    windowEnd: regional.windowEnd,
+    ...(regional.error ? { error: regional.error } : {}),
+  };
 }
