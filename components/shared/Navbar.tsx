@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
 import { useT } from "@/lib/languageContext";
 import LanguageSelector from "@/components/shared/LanguageSelector";
