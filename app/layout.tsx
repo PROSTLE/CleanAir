@@ -3,6 +3,9 @@ import { Geist, Geist_Mono, Source_Serif_4 } from "next/font/google";
 import "./globals.css";
 import "./landing.css";
 import "./dashboard.css";
+import "./operator.css";
+import "./ui.css";
+import "./forecast.css";
 import { LanguageProvider } from "@/lib/languageContext";
 import Footer from "@/components/shared/Footer";
 
