@@ -1,11 +1,15 @@
 import type { Timestamp } from "firebase/firestore";
+import { toCoordinate } from "@/lib/geo";
 import type {
   HazardType,
   HealthRisk,
   Incident,
   IncidentEvidence,
+  IncidentOutcome,
   IncidentStatus,
+  ReportIntegrity,
   Severity,
+  WorkOrder,
 } from "@/lib/types";
 
 export interface FirestoreReport {
@@ -40,6 +44,10 @@ export interface FirestoreReport {
   dispatchedAction?: string;
   dispatchedAt?: Timestamp;
   resolvedAt?: Timestamp;
+  outcome?: IncidentOutcome;
+  integrity?: ReportIntegrity;
+  workOrder?: WorkOrder;
+  channel?: "web" | "whatsapp";
   // Written by ambientScan.ts — carries the full signal picture for the
   // map popup without committing to a single hazard label.
   possibleSources?: string[];
@@ -161,8 +169,10 @@ export function reportToIncident(id: string, report: FirestoreReport): Incident 
     hazardType,
     healthRisk: getHealthRisk(severity),
     isAnonymous: report.anonymous ?? true,
-    latitude: Number(report.location?.lat ?? 28.6264),
-    longitude: Number(report.location?.lng ?? 77.3192),
+    // NaN (not a made-up Delhi point) when a doc lacks coordinates; callers
+    // drop those via isInOperationalRegion / Number.isFinite checks.
+    latitude: toCoordinate(report.location?.lat),
+    longitude: toCoordinate(report.location?.lng),
     neighborhood: report.location?.label ?? "Citizen report",
     note,
     citizenNotes,
@@ -180,6 +190,10 @@ export function reportToIncident(id: string, report: FirestoreReport): Incident 
     dispatchedAction: report.dispatchedAction,
     dispatchedAt: report.dispatchedAt?.toDate().toISOString(),
     resolvedAt: report.resolvedAt?.toDate().toISOString(),
+    outcome: report.outcome,
+    integrity: report.integrity,
+    workOrder: report.workOrder,
+    channel: report.channel,
     possibleSources: report.possibleSources,
     triggerPollutants: report.triggerPollutants
       ?.filter((pollutant) => typeof pollutant.name === "string")
