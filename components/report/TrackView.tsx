@@ -4,7 +4,9 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { doc, onSnapshot } from "firebase/firestore";
 import LiveIndicator from "@/components/shared/LiveIndicator";
+import { formatCityTime, getCity, resolveCityForPoint } from "@/lib/cities";
 import { db, isFirebaseConfigured } from "@/lib/firebase";
+import { toCoordinate } from "@/lib/geo";
 import type { FirestoreReport } from "@/lib/firestoreReports";
 import { useT } from "@/lib/languageContext";
 import { TIER_LABELS } from "@/lib/supportEvidence";
@@ -13,11 +15,13 @@ type StepState = "done" | "current" | "waiting" | "stopped";
 
 type Step = { key: string; state: StepState; detail: string; time?: string };
 
-function formatTime(value?: { toDate?: () => Date } | null) {
+/** Times are shown in the time zone of the city the report was filed in. */
+function formatTime(report: TrackedReport, value?: { toDate?: () => Date } | null) {
   const date = value?.toDate?.();
-  return date
-    ? date.toLocaleString("en-IN", { timeZone: "Asia/Kolkata", dateStyle: "medium", timeStyle: "short" })
-    : undefined;
+  if (!date) return undefined;
+  const city =
+    resolveCityForPoint(toCoordinate(report.location?.lat), toCoordinate(report.location?.lng)) ?? getCity("delhi");
+  return formatCityTime(city, date);
 }
 
 type TrackedReport = FirestoreReport & {
@@ -43,7 +47,7 @@ function buildSteps(report: TrackedReport, t: (key: string) => string): Step[] {
               key: "track_step_analysed",
               state: "done",
               detail: classification?.description ?? t("track_signal_found"),
-              time: formatTime(report.classifiedAt),
+              time: formatTime(report, report.classifiedAt),
             };
 
   const analysisDone = analysed.state === "done";
@@ -62,7 +66,7 @@ function buildSteps(report: TrackedReport, t: (key: string) => string): Step[] {
         : { key: "track_step_corroborated", state: resolved ? "stopped" : "current", detail: t("track_awaiting_corroboration") };
 
   const dispatch: Step = dispatched
-    ? { key: "track_step_dispatched", state: "done", detail: t("track_dispatched"), time: formatTime(report.dispatchedAt) }
+    ? { key: "track_step_dispatched", state: "done", detail: t("track_dispatched"), time: formatTime(report, report.dispatchedAt) }
     : { key: "track_step_dispatched", state: promoted && !resolved ? "current" : "waiting", detail: t("track_waiting") };
 
   const closed: Step = resolved
@@ -70,12 +74,12 @@ function buildSteps(report: TrackedReport, t: (key: string) => string): Step[] {
         key: "track_step_resolved",
         state: report.outcome === "false_positive" ? "stopped" : "done",
         detail: report.outcome === "false_positive" ? t("track_closed_unconfirmed") : t("track_resolved"),
-        time: formatTime(report.resolvedAt),
+        time: formatTime(report, report.resolvedAt),
       }
     : { key: "track_step_resolved", state: "waiting", detail: t("track_waiting") };
 
   return [
-    { key: "track_step_received", state: "done", detail: t("track_received"), time: formatTime(report.createdAt) },
+    { key: "track_step_received", state: "done", detail: t("track_received"), time: formatTime(report, report.createdAt) },
     analysed,
     corroborated,
     dispatch,

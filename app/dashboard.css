@@ -372,6 +372,15 @@
   margin-top: 18px;
 }
 
+/* Sign-in scrolls here; clear the sticky navbar and skip the focus ring. */
+.svd-queue {
+  scroll-margin-top: 104px;
+}
+
+.svd-queue:focus {
+  outline: none;
+}
+
 .svd-table-scroll {
   overflow-x: auto;
 }
@@ -459,7 +468,9 @@
 /* The map component sizes to its own container, so pin the height here. */
 .svd-map > *,
 .svd-map .map-shell,
-.svd-map .map-canvas {
+.svd-map .map-canvas,
+.svd-map .public-map-shell,
+.svd-map .hotspot-map-panel {
   height: 100%;
   min-height: 0;
 }

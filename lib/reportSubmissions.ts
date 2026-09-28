@@ -20,6 +20,8 @@ export interface ReportSubmissionResult {
   id: string;
   stored: true;
   inPilotArea: boolean;
+  /** Monitored city containing the report location, or null outside all of them. */
+  cityId: string | null;
   integrityFlags: string[];
 }
 
@@ -58,6 +60,7 @@ export async function submitCitizenReport(
     id: payload.id,
     stored: true,
     inPilotArea: payload.inPilotArea ?? true,
+    cityId: payload.cityId ?? null,
     integrityFlags: payload.integrityFlags ?? [],
   };
 }

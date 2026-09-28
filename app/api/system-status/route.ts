@@ -32,7 +32,10 @@ export async function GET() {
     integrations: {
       gemini: configured("GEMINI_API_KEY"),
       cpcb: configured("CPCB_API_KEY"),
-      openWeather: configured("OPENWEATHER_API_KEY"),
+      // Station feed for every capital except Delhi.
+      waqi: configured("WAQI_API_TOKEN"),
+      // Open-Meteo needs no key.
+      weather: true,
       // BigQuery authenticates with explicit credentials when present,
       // otherwise Application Default Credentials; the project ID is required.
       bigQuery: configured("BIGQUERY_PROJECT_ID"),

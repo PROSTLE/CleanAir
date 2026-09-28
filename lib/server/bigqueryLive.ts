@@ -1,14 +1,14 @@
 import "server-only";
 
 import { BigQuery } from "@google-cloud/bigquery";
-import type { NearbyStationReading } from "@/lib/cpcbSensor";
+import type { StationReading } from "@/lib/stations";
 import type { SensorReading } from "@/lib/forecastEngine";
 import { getH3CellId } from "@/lib/geo";
 import { parseSensorTimestamp } from "@/lib/supportEvidence";
 
 // Tables live in one dataset; see scripts/setup-bigquery.sql for the DDL.
 //   archive  – historical CPCB hourly data (Kaggle 2015–2020, via ml/data-prep.py)
-//   live     – CPCB readings appended by /api/cron/tick every run
+//   live     – station readings (CPCB for Delhi, WAQI elsewhere) appended by /api/cron/tick
 //   model    – BigQuery ML ARIMA_PLUS model trained on the live table
 function projectId() {
   return process.env.BIGQUERY_PROJECT_ID?.trim() || null;
@@ -75,11 +75,11 @@ const READING_COLUMNS = `
 // ─── Ingestion ────────────────────────────────────────────────────────────────
 
 /**
- * Appends the current CPCB snapshot. insertId (station + source timestamp)
+ * Appends the current station snapshot for every city. insertId (station + source timestamp)
  * lets BigQuery drop retries; reads also de-duplicate per station-hour, so a
  * station that hasn't refreshed since the last tick doesn't skew history.
  */
-export async function insertLiveReadings(stations: NearbyStationReading[]) {
+export async function insertLiveReadings(stations: StationReading[]) {
   const { dataset, table } = splitTableId(liveTable());
   const rows = stations
     .map((station) => {

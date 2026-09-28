@@ -11,14 +11,14 @@ export async function POST(request: Request) {
     if (!isGeminiConfigured()) throw new HttpError(503, "GEMINI_API_KEY is not set.");
     await enforceRateLimit("copilot", operator.uid, 60, 60 * 60 * 1000);
 
-    const body = await readJson<{ messages?: CopilotMessage[] }>(request);
+    const body = await readJson<{ messages?: CopilotMessage[]; cityId?: string }>(request);
     const messages = (body.messages ?? []).filter(
       (message): message is CopilotMessage =>
         (message?.role === "user" || message?.role === "assistant") && typeof message.text === "string",
     );
     if (messages.length === 0) throw new HttpError(400, "Ask a question first.");
 
-    const result = await askCopilot(messages);
+    const result = await askCopilot(messages, typeof body.cityId === "string" ? body.cityId : "delhi");
     return NextResponse.json(result);
   });
 }

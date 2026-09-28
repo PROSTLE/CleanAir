@@ -55,6 +55,8 @@ export interface GooglePlaceResult {
 export interface GooglePlaceAutocomplete {
   addListener: (eventName: string, handler: () => void) => void;
   getPlace: () => GooglePlaceResult;
+  setComponentRestrictions: (restrictions: { country: string | string[] }) => void;
+  setBounds: (bounds: { north: number; south: number; east: number; west: number }) => void;
 }
 
 export interface GoogleMapsApi {

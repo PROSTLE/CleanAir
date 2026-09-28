@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { getNearestStationReading } from "@/lib/cpcbSensor";
+import { getNearestStationReading } from "@/lib/stations";
 import { getSatelliteDataForPoint } from "@/lib/earthEngineSatellite";
-import { getWindData } from "@/lib/openWeather";
+import { getWindData } from "@/lib/weather";
 import { recordPollutionSnapshot } from "@/lib/pollutionSnapshots";
 
 export const runtime = "nodejs";

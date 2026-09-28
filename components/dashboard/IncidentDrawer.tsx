@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import { getIncidentAge, getRecommendedAction, getRecommendedActionKey } from "@/components/command/commandData";
 import { useOperator } from "@/components/dashboard/OperatorContext";
 import Icon, { HAZARD_ICON } from "@/components/shared/Icon";
+import { cityTimeZoneLabel, formatCityTime, resolveCityForPoint } from "@/lib/cities";
+import { useCity } from "@/lib/cityContext";
 import { compassLabel } from "@/lib/geo";
 import { useT } from "@/lib/languageContext";
 import { TIER_LABELS } from "@/lib/supportEvidence";
@@ -39,8 +41,9 @@ type FieldContext = {
   googleAirQuality: Piece<{
     universalAqi: number | null;
     universalCategory: string | null;
-    indiaAqi: number | null;
-    indiaCategory: string | null;
+    localAqi: number | null;
+    localCategory: string | null;
+    localIndexName: string | null;
     dominantPollutant: string | null;
     pm25: number | null;
     time: string | null;
@@ -80,10 +83,18 @@ export default function IncidentDrawer({
   const [workOrder, setWorkOrder] = useState<WorkOrder | null>(incident.workOrder ?? null);
   const [workOrderState, setWorkOrderState] = useState<"idle" | "loading" | "error">("idle");
   const [workOrderError, setWorkOrderError] = useState<string | null>(null);
-  const [language, setLanguage] = useState<"en" | "hi">("en");
+  const [language, setLanguage] = useState<"en" | "local">("en");
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<"resolve" | "false_positive" | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const { city: selectedCity } = useCity();
+  const incidentCity = resolveCityForPoint(incident.latitude, incident.longitude) ?? selectedCity;
+  // Work orders drafted before multi-city support only carry a Hindi body.
+  const workOrderLocalBody = workOrder?.bodyLocal ?? workOrder?.bodyHi ?? null;
+  const workOrderLocal = workOrderLocalBody
+    ? (workOrder?.localLanguage ?? { code: "hi", name: "हिन्दी" })
+    : null;
+  const workOrderBody = language === "local" && workOrderLocalBody ? workOrderLocalBody : (workOrder?.bodyEn ?? "");
 
   useEffect(() => {
     panelRef.current?.focus();
@@ -142,6 +153,7 @@ export default function IncidentDrawer({
 
   const recommendedAction = t(getRecommendedActionKey(incident)) || getRecommendedAction(incident);
   const sensor = evidence?.sensor;
+  const hasStationReading = (sensor?.source === "CPCB" || sensor?.source === "WAQI") && !!sensor.stationName;
   const satellite = evidence?.satellite;
   const fusion = evidence?.fusion;
   const tierLabel = evidence?.tier ? t(`tier_${evidence.tier}`) || TIER_LABELS[evidence.tier] : t("drawer_unpromoted");
@@ -239,14 +251,15 @@ export default function IncidentDrawer({
                   <dd>{evidence.citizenSignal.reportCount}</dd>
                 </div>
                 <div>
-                  <dt>{t("drawer_station")}</dt>
+                  <dt>{t("drawer_station_generic")}</dt>
                   <dd>
-                    {sensor?.source === "CPCB" && sensor.stationName
+                    {hasStationReading
                       ? `${sensor.stationName} · ${sensor.distanceKm?.toFixed(1) ?? "—"} km`
                       : t("drawer_no_station")}
+                    {hasStationReading && sensor.attribution && <small>{sensor.attribution}</small>}
                   </dd>
                 </div>
-                {sensor?.source === "CPCB" && (
+                {hasStationReading && (
                   <div>
                     <dt>{sensor.primaryName ?? "PM2.5"}</dt>
                     <dd>
@@ -255,7 +268,7 @@ export default function IncidentDrawer({
                         <em>
                           {" "}
                           ({sensor.primaryDelta >= 0 ? "+" : ""}
-                          {sensor.primaryDelta}% {t("drawer_vs_standard")})
+                          {sensor.primaryDelta}% {t("drawer_vs_national_standard")})
                         </em>
                       )}
                       {sensor.lastUpdated && <small>{sensor.lastUpdated}</small>}
@@ -405,10 +418,10 @@ export default function IncidentDrawer({
                 {context.googleAirQuality.status === "ok" ? (
                   <dl className="svd-facts">
                     <div>
-                      <dt>{t("drawer_gaq_india")}</dt>
+                      <dt>{context.googleAirQuality.data.localIndexName ?? t("drawer_gaq_local")}</dt>
                       <dd>
-                        {context.googleAirQuality.data.indiaAqi ?? "—"}
-                        {context.googleAirQuality.data.indiaCategory && <small>{context.googleAirQuality.data.indiaCategory}</small>}
+                        {context.googleAirQuality.data.localAqi ?? "—"}
+                        {context.googleAirQuality.data.localCategory && <small>{context.googleAirQuality.data.localCategory}</small>}
                       </dd>
                     </div>
                     <div>
@@ -483,21 +496,23 @@ export default function IncidentDrawer({
                   <li key={action}>{action}</li>
                 ))}
               </ol>
-              <div className="svd-viewnav" role="tablist" aria-label={t("drawer_language")}>
-                {(["en", "hi"] as const).map((lang) => (
-                  <button
-                    key={lang}
-                    type="button"
-                    role="tab"
-                    aria-selected={language === lang}
-                    className={`svd-viewnav-item ${language === lang ? "is-active" : ""}`}
-                    onClick={() => setLanguage(lang)}
-                  >
-                    {lang === "en" ? "English" : "हिन्दी"}
-                  </button>
-                ))}
-              </div>
-              <pre className="svd-workorder-body">{language === "en" ? workOrder.bodyEn : workOrder.bodyHi}</pre>
+              {workOrderLocal && (
+                <div className="svd-viewnav" role="tablist" aria-label={t("drawer_language")}>
+                  {(["en", "local"] as const).map((lang) => (
+                    <button
+                      key={lang}
+                      type="button"
+                      role="tab"
+                      aria-selected={language === lang}
+                      className={`svd-viewnav-item ${language === lang ? "is-active" : ""}`}
+                      onClick={() => setLanguage(lang)}
+                    >
+                      {lang === "en" ? "English" : workOrderLocal.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <pre className="svd-workorder-body">{workOrderBody}</pre>
               {workOrder.evidenceCited.length > 0 && (
                 <ul className="svd-chip-row">
                   {workOrder.evidenceCited.map((item) => (
@@ -507,15 +522,15 @@ export default function IncidentDrawer({
               )}
               <div className="svd-workorder-foot">
                 <small>
-                  {t("drawer_workorder_generated")
+                  {t("drawer_workorder_generated_local")
                     .replace("{model}", workOrder.model)
-                    .replace("{time}", new Date(workOrder.generatedAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }))}
+                    .replace("{time}", `${formatCityTime(incidentCity, workOrder.generatedAt)} ${cityTimeZoneLabel(incidentCity)}`)}
                 </small>
                 <button
                   type="button"
                   className="svd-action"
                   onClick={() => {
-                    const text = `${workOrder.subject}\n${t("drawer_to")}: ${workOrder.department}\n\n${language === "en" ? workOrder.bodyEn : workOrder.bodyHi}\n\n${workOrder.actions.map((action, index) => `${index + 1}. ${action}`).join("\n")}`;
+                    const text = `${workOrder.subject}\n${t("drawer_to")}: ${workOrder.department}\n\n${workOrderBody}\n\n${workOrder.actions.map((action, index) => `${index + 1}. ${action}`).join("\n")}`;
                     void navigator.clipboard?.writeText(text).then(() => onToast(t("drawer_copied")));
                   }}
                 >

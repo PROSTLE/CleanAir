@@ -12,7 +12,9 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import type { ForecastResult, SensorReading } from "@/lib/forecastEngine";
-import { getAQIInfo, getIstHour } from "@/lib/forecastEngine";
+import { cityTimeZoneLabel } from "@/lib/cities";
+import { useCity } from "@/lib/cityContext";
+import { getAQIInfo, getLocalHour } from "@/lib/forecastEngine";
 import { useT } from "@/lib/languageContext";
 
 /** An independent series drawn over the forecast horizon, matched by timestamp. */
@@ -62,6 +64,7 @@ function ChartTooltip({
   payload?: Array<{ payload: ChartPoint }>;
 }) {
   const t = useT();
+  const { city } = useCity();
   if (!active || !payload?.length) return null;
   const point = payload[0].payload;
   const isForecast = point.actual === undefined;
@@ -71,7 +74,7 @@ function ChartTooltip({
   return (
     <div className="fc-tooltip">
       <p className="fc-tooltip-head">
-        <span>{point.label} IST</span>
+        <span>{point.label} {cityTimeZoneLabel(city)}</span>
         <span>{isForecast ? t("forecast_chart_legend_forecast") : t("forecast_chart_legend_actual")}</span>
       </p>
       {value !== undefined && (
@@ -108,6 +111,7 @@ function ChartTooltip({
 
 export default function ForecastChart({ forecast, history, arima, google }: ForecastChartProps) {
   const t = useT();
+  const { city } = useCity();
   const points: ChartPoint[] = [];
 
   // Last 12 measured hours, then the 24-hour projection. Keys are unique so
@@ -118,7 +122,7 @@ export default function ForecastChart({ forecast, history, arima, google }: Fore
     .slice(-12);
 
   recentHistory.forEach((reading, index) => {
-    const label = `${String(getIstHour(new Date(reading.sampledAt))).padStart(2, "0")}:00`;
+    const label = `${String(getLocalHour(new Date(reading.sampledAt), city.timeZone)).padStart(2, "0")}:00`;
     points.push({ key: `h${index}`, label, actual: Math.round(reading.sensor_pm25 as number) });
   });
 
@@ -175,10 +179,15 @@ export default function ForecastChart({ forecast, history, arima, google }: Fore
           <Tooltip content={<ChartTooltip />} cursor={{ stroke: "rgba(16, 26, 21, 0.18)", strokeWidth: 1 }} />
 
           <ReferenceLine
-            y={60}
+            y={city.standards.pm25}
             stroke="#c9a45e"
             strokeDasharray="2 4"
-            label={{ value: t("forecast_chart_legend_naaqs"), fontSize: 10, fill: "#8a6a2e", position: "insideTopLeft" }}
+            label={{
+              value: t("forecast_chart_legend_national").replace("{value}", String(city.standards.pm25)),
+              fontSize: 10,
+              fill: "#8a6a2e",
+              position: "insideTopLeft",
+            }}
           />
           <ReferenceLine
             y={15}

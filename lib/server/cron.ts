@@ -1,7 +1,7 @@
 import "server-only";
 
 import { scanAmbientHotspots } from "@/lib/ambientScan";
-import { fetchAllStationReadings } from "@/lib/cpcbSensor";
+import { CITIES } from "@/lib/cities";
 import { getRegionalFireHotspots } from "@/lib/earthEngineSatellite";
 import { adminDb, adminServerTimestamp } from "@/lib/firebaseAdmin";
 import {
@@ -12,6 +12,7 @@ import {
   startArimaTraining,
 } from "@/lib/server/bigqueryLive";
 import { classifyReport, MAX_CLASSIFICATION_ATTEMPTS } from "@/lib/server/classifyReport";
+import { fetchAllCityStationReadings } from "@/lib/stations";
 
 const PENDING_GRACE_MS = 2 * 60 * 1000;
 const SWEEP_LIMIT = 10;
@@ -60,8 +61,8 @@ async function sweepUnclassifiedReports(origin: string) {
 
 async function recordLiveReadings() {
   if (!isBigQueryConfigured()) return { skipped: "BIGQUERY_PROJECT_ID is not set." };
-  const stations = await fetchAllStationReadings();
-  if (stations.length === 0) return { skipped: "CPCB returned no station readings." };
+  const stations = await fetchAllCityStationReadings();
+  if (stations.length === 0) return { skipped: "No station feed returned readings." };
   return { stations: stations.length, ...(await insertLiveReadings(stations)) };
 }
 
@@ -88,14 +89,25 @@ export async function runScheduledTick(origin: string) {
   const results = await Promise.all([
     step("classificationSweep", () => sweepUnclassifiedReports(origin)),
     step("ambientScan", async () => {
-      const result = await scanAmbientHotspots();
-      return { scanned: result.scanned, promoted: result.promoted.length, watching: result.watching.length };
+      const results = await scanAmbientHotspots();
+      return Object.fromEntries(
+        results.map((result) => [
+          result.cityId,
+          "error" in result
+            ? { error: result.error }
+            : { scanned: result.scanned, promoted: result.promoted.length, watching: result.watching.length },
+        ]),
+      );
     }),
     step("bigqueryIngest", recordLiveReadings),
     step("fireRefresh", async () => {
-      const fires = await getRegionalFireHotspots({ refresh: true });
-      if (fires.error) throw new Error(fires.error);
-      return { fires: fires.fires.length, truncated: fires.truncated };
+      const perCity = await Promise.all(
+        CITIES.map(async (city) => {
+          const fires = await getRegionalFireHotspots(city.id, { refresh: true });
+          return [city.id, fires.error ? { error: fires.error } : { fires: fires.fires.length, truncated: fires.truncated }];
+        }),
+      );
+      return Object.fromEntries(perCity);
     }),
   ]);
   // Training reads what ingest just wrote, so it runs after.

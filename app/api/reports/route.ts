@@ -1,7 +1,7 @@
 import { after, NextResponse } from "next/server";
 import { adminDb, adminServerTimestamp } from "@/lib/firebaseAdmin";
 import { getH3CellId, haversineKm, toCoordinate } from "@/lib/geo";
-import { isInOperationalRegion } from "@/lib/operationalRegion";
+import { cityForPoint } from "@/lib/cities";
 import { classifyReport, isAllowedPhotoUrl } from "@/lib/server/classifyReport";
 import {
   enforceRateLimit,
@@ -94,10 +94,13 @@ export async function POST(request: Request) {
     const label = (body.location.label ?? "").trim().slice(0, MAX_LABEL_CHARS) || `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
     const h3CellId = getH3CellId({ lat, lng });
     const integrity = buildIntegrity(body, lat, lng);
+    const city = cityForPoint(lat, lng);
 
     const docRef = await adminDb.collection("reports").add({
       anonymous: body.anonymous !== false,
       channel: "web",
+      // null = outside every monitored city; still stored and classified.
+      cityId: city?.id ?? null,
       createdAt: adminServerTimestamp(),
       h3CellId,
       hazardId,
@@ -111,7 +114,7 @@ export async function POST(request: Request) {
       status: "pending",
       classificationAttempts: 0,
       // Pending placeholders; classifyReport replaces them with real
-      // Gemini, CPCB, Sentinel-5P and FIRMS evidence. No guessed numbers.
+      // Gemini, ground-station, Sentinel-5P and FIRMS evidence. No guessed numbers.
       validation: {
         alertReason:
           "Single citizen report captured; waiting for Gemini classification and corroborating signals.",
@@ -152,7 +155,8 @@ export async function POST(request: Request) {
     return NextResponse.json(
       {
         id: docRef.id,
-        inPilotArea: isInOperationalRegion(lat, lng),
+        inPilotArea: city !== null,
+        cityId: city?.id ?? null,
         integrityFlags: integrity.flags,
       },
       { status: 201 },

@@ -90,7 +90,7 @@ export interface IncidentEvidence {
     // Sentinel-5P product used for the current window (NRTI or OFFL).
     currentProduct?: string | null;
   };
-  // OpenWeatherMap wind at classification time (direction wind blows FROM).
+  // Open-Meteo wind at classification time (direction wind blows FROM).
   wind?: {
     speedMs: number;
     fromDeg: number;
@@ -111,12 +111,15 @@ export interface IncidentEvidence {
     immediate?: boolean;
     incidentThreshold?: number;
     watchThreshold?: number;
-    baselineSource?: "station_history" | "delhi_median";
+    // "delhi_median" only survives on docs written before multi-city support.
+    baselineSource?: "station_history" | "city_median" | "delhi_median";
     trend: "rising" | "flat" | "falling" | "insufficient_data";
     // "unavailable" = no station reading; "estimated" only survives on
     // legacy docs written before placeholder values were removed.
-    source?: "CPCB" | "estimated" | "unavailable";
+    source?: "CPCB" | "WAQI" | "estimated" | "unavailable";
     stationName?: string;
+    /** Agency operating the station, when the feed names it. */
+    attribution?: string | null;
     distanceKm?: number;
     lastUpdated?: string;
     pm25?: number | null;
@@ -224,7 +227,11 @@ export interface WorkOrder {
   subject: string;
   summary: string;
   bodyEn: string;
-  bodyHi: string;
+  /** Body in the city's local language (see lib/cities.ts localLanguage). */
+  bodyLocal?: string | null;
+  localLanguage?: { code: string; name: string } | null;
+  /** Hindi body on work orders drafted before multi-city support. */
+  bodyHi?: string;
   actions: string[];
   evidenceCited: string[];
   generatedAt: string;

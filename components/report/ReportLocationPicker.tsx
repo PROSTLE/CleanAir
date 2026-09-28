@@ -9,6 +9,8 @@ import {
   type GoogleMapMarker,
   type GooglePlaceAutocomplete,
 } from "@/lib/googleMaps";
+import type { CityConfig } from "@/lib/cities";
+import { useCity } from "@/lib/cityContext";
 import { toCoordinate } from "@/lib/geo";
 import { useT } from "@/lib/languageContext";
 
@@ -24,8 +26,6 @@ interface ReportLocationPickerProps {
 }
 
 type PickerStatus = "idle" | "loading" | "ready" | "error";
-
-const DELHI_CENTER = { lat: 28.6139, lng: 77.209 };
 
 const pickerMapStyles = [
   {
@@ -53,8 +53,8 @@ const pickerMapStyles = [
   },
 ];
 
-function toPosition(location: ReportLocationValue) {
-  // Blank means "not set yet": open on Delhi, not on (0, 0).
+function toPosition(location: ReportLocationValue, city: CityConfig) {
+  // Blank means "not set yet": open on the selected city, not on (0, 0).
   const lat = toCoordinate(location.lat);
   const lng = toCoordinate(location.lng);
 
@@ -62,7 +62,16 @@ function toPosition(location: ReportLocationValue) {
     return { lat, lng };
   }
 
-  return DELHI_CENTER;
+  return city.center;
+}
+
+// Suggestions are limited to the city's country and biased to its outline.
+function citySearchScope(city: CityConfig) {
+  const { minLat, maxLat, minLng, maxLng } = city.bounds;
+  return {
+    country: city.countryCode,
+    bounds: { north: maxLat, south: minLat, east: maxLng, west: minLng },
+  };
 }
 
 function formatCoordinate(value: number) {
@@ -90,6 +99,8 @@ export default function ReportLocationPicker({
   value,
 }: ReportLocationPickerProps) {
   const t = useT();
+  const { city } = useCity();
+  const cityRef = useRef(city);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const mapNodeRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<GoogleMapInstance | null>(null);
@@ -105,7 +116,19 @@ export default function ReportLocationPicker({
   useEffect(() => {
     onChangeRef.current = onChange;
     valueRef.current = value;
-  }, [onChange, value]);
+    cityRef.current = city;
+  }, [city, onChange, value]);
+
+  // Switching city re-scopes search and recentres an open map picker.
+  useEffect(() => {
+    const scope = citySearchScope(city);
+    autocompleteRef.current?.setComponentRestrictions({ country: scope.country });
+    autocompleteRef.current?.setBounds(scope.bounds);
+    if (!Number.isFinite(toCoordinate(valueRef.current.lat))) {
+      mapRef.current?.panTo(city.center);
+      markerRef.current?.setPosition?.(city.center);
+    }
+  }, [city]);
 
   const commitLocation = useCallback((
     position: { lat: number; lng: number },
@@ -180,8 +203,10 @@ export default function ReportLocationPicker({
 
         if (!autocompleteRef.current) {
           const geocoder = new maps.Geocoder();
+          const scope = citySearchScope(cityRef.current);
           const autocomplete = new maps.places.Autocomplete(inputRef.current, {
-            componentRestrictions: { country: "in" },
+            componentRestrictions: { country: scope.country },
+            bounds: scope.bounds,
             fields: ["formatted_address", "geometry", "name"],
           });
 
@@ -241,7 +266,7 @@ export default function ReportLocationPicker({
         const maps = google?.maps;
         if (!maps) return;
 
-        const startPosition = toPosition(valueRef.current);
+        const startPosition = toPosition(valueRef.current, cityRef.current);
         const map = new maps.Map(mapNodeRef.current, {
           center: startPosition,
           clickableIcons: false,

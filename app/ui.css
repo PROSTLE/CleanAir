@@ -173,45 +173,45 @@
    Delhi illustration
    -------------------------------------------------------------------------- */
 
-.vs-delhi {
+.vs-city {
   display: block;
   width: 100%;
   height: auto;
   max-height: 100%;
 }
 
-.vs-delhi-fill {
+.vs-city-fill {
   fill: rgba(63, 168, 86, 0.06);
 }
 
-.vs-delhi-hex {
+.vs-city-hex {
   fill: none;
   stroke: rgba(44, 125, 64, 0.2);
   stroke-width: 0.7;
 }
 
-.vs-delhi-outline {
+.vs-city-outline {
   fill: none;
   stroke: var(--sv-green-dark);
   stroke-width: 1.4;
   stroke-linejoin: round;
 }
 
-.vs-delhi-point circle:last-child {
+.vs-city-point circle:last-child {
   fill: #c2410c;
   stroke: #fff;
   stroke-width: 1.5;
 }
 
-.vs-delhi-point .vs-delhi-halo {
+.vs-city-point .vs-city-halo {
   fill: rgba(194, 65, 12, 0.14);
 }
 
-.vs-delhi-point.is-calm circle:last-child {
+.vs-city-point.is-calm circle:last-child {
   fill: var(--sv-green);
 }
 
-.vs-delhi-point.is-calm .vs-delhi-halo {
+.vs-city-point.is-calm .vs-city-halo {
   fill: rgba(63, 168, 86, 0.14);
 }
 
@@ -247,7 +247,7 @@
   gap: 14px;
 }
 
-.vs-empty.is-stacked .vs-delhi {
+.vs-empty.is-stacked .vs-city {
   width: min(200px, 60%);
 }
 
@@ -257,7 +257,7 @@
     gap: 14px;
   }
 
-  .vs-empty .vs-delhi {
+  .vs-empty .vs-city {
     width: min(180px, 60%);
   }
 }
@@ -305,12 +305,12 @@
   font-size: 0.78rem;
 }
 
-.google-map-state {
+.hotspot-map-state {
   gap: 10px;
   padding: 24px;
 }
 
-.google-map-state-art {
+.hotspot-map-state-art {
   width: min(280px, 60vw);
   margin: 0 auto 8px;
 }

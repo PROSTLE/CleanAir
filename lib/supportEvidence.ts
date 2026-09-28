@@ -93,7 +93,10 @@ export function checkStoredSensorSupport(
   sensor: IncidentEvidence["sensor"] | null | undefined,
 ): boolean {
   if (!sensor) return false;
-  if (sensor.source === "CPCB" && !isSensorReadingFresh(sensor.lastUpdated)) return false;
+  // Every real station network must be fresh (CPCB and WAQI alike).
+  if ((sensor.source === "CPCB" || sensor.source === "WAQI") && !isSensorReadingFresh(sensor.lastUpdated)) {
+    return false;
+  }
   const distanceKm = sensor.distanceKm ?? null;
   if (distanceKm === null || distanceKm > SENSOR_PROXIMITY_KM) return false;
   const delta = sensor.primaryDelta ?? sensor.pm25Delta ?? 0;

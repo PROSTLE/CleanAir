@@ -6,7 +6,7 @@
 
 export const CLASSIFICATION_MODELS = ["gemini-3.5-flash", "gemini-3.1-flash-lite"];
 
-export const CLASSIFICATION_PROMPT = `You are an air quality sensor for a municipal pollution monitoring system in Delhi NCR.
+export const CLASSIFICATION_PROMPT = `You are an air quality sensor for a municipal pollution monitoring system.
 Analyze this citizen-uploaded photo for VISIBLE, active air pollution signals only.
 
 Count as pollution:

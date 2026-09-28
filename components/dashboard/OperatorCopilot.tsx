@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useOperator } from "@/components/dashboard/OperatorContext";
 import Icon from "@/components/shared/Icon";
+import { useCity } from "@/lib/cityContext";
 import { useT } from "@/lib/languageContext";
 
 type Message = {
@@ -12,10 +13,11 @@ type Message = {
   model?: string;
 };
 
-const SUGGESTIONS = ["copilot_suggest_priority", "copilot_suggest_fires", "copilot_suggest_plan"];
+const SUGGESTIONS = ["copilot_suggest_priority", "copilot_suggest_fires_city", "copilot_suggest_plan"];
 
 export default function OperatorCopilot() {
   const t = useT();
+  const { city } = useCity();
   const { isOperator, operatorFetch } = useOperator();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
@@ -42,6 +44,7 @@ export default function OperatorCopilot() {
         model: string;
       }>("/api/operator/copilot", {
         messages: next.map((message) => ({ role: message.role, text: message.text })),
+        cityId: city.id,
       });
       setMessages([...next, { role: "assistant", text: result.answer, steps: result.steps, model: result.model }]);
     } catch (askError) {
@@ -78,8 +81,8 @@ export default function OperatorCopilot() {
               <ul className="svd-chip-row">
                 {SUGGESTIONS.map((key) => (
                   <li key={key}>
-                    <button type="button" className="svd-suggestion" onClick={() => void ask(t(key))}>
-                      {t(key)}
+                    <button type="button" className="svd-suggestion" onClick={() => void ask(t(key).replace("{city}", city.name))}>
+                      {t(key).replace("{city}", city.name)}
                     </button>
                   </li>
                 ))}

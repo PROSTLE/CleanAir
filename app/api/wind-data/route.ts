@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getWindData } from "@/lib/openWeather";
+import { getWindData } from "@/lib/weather";
 
 export const runtime = "nodejs";
 
@@ -12,7 +12,7 @@ export async function GET(request: Request) {
     return NextResponse.json(
       {
         error: "lat and lng query params are required numbers.",
-        source: "OpenWeatherMap",
+        source: "Open-Meteo",
       },
       { status: 400 },
     );
@@ -22,8 +22,8 @@ export async function GET(request: Request) {
   if (!result) {
     return NextResponse.json(
       {
-        error: "OpenWeatherMap wind data is unavailable.",
-        source: "OpenWeatherMap",
+        error: "Open-Meteo wind data is unavailable.",
+        source: "Open-Meteo",
       },
       { status: 502 },
     );

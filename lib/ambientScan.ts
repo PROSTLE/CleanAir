@@ -1,14 +1,17 @@
 import "server-only";
 
 import { adminDb, adminServerTimestamp } from "@/lib/firebaseAdmin";
-import type { NearbyStationReading } from "@/lib/cpcbSensor";
-import { fetchAllStationReadings, getNearestStationReading, getPrimaryPollutant } from "@/lib/cpcbSensor";
+import { CITIES, getCity, isInCity, type CityConfig } from "@/lib/cities";
 import type { SatelliteDataResult } from "@/lib/earthEngineSatellite";
 import { getSatelliteDataForPoint } from "@/lib/earthEngineSatellite";
 import { computeFusionConfidence, satelliteWeightToScore, sensorDeltaToScore } from "@/lib/fusionConfidence";
-import { MONITORED_CELLS } from "@/lib/mapConstants";
-import { isInOperationalRegion } from "@/lib/operationalRegion";
 import { getH3CellId, getSeverity } from "@/lib/geo";
+import {
+  fetchCityStationReadings,
+  getNearestStationReading,
+  getPrimaryPollutant,
+  type StationReading,
+} from "@/lib/stations";
 import {
   SENSOR_PROXIMITY_KM,
   SENSOR_EXTREME_DELTA_PCT,
@@ -36,7 +39,7 @@ export type SensorSupportResult = {
   cityBaselineDeltaPct?: number | null;
   watchThreshold?: number;
   incidentThreshold?: number;
-  baselineSource?: "station_history" | "delhi_median";
+  baselineSource?: "station_history" | "city_median";
 };
 
 export type SatelliteSupportResult = {
@@ -66,7 +69,8 @@ export function getSatelliteHazardWeight(
 
 export function checkSensorSupport(
   hazardType: HazardType,
-  station: Partial<NearbyStationReading> | null | undefined,
+  station: Partial<StationReading> | null | undefined,
+  standards: CityConfig["standards"],
   geminiType?: string,
 ): SensorSupportResult {
   if (!station) {
@@ -103,13 +107,20 @@ export function checkSensorSupport(
   // (getPrimaryPollutant only special-cases "dust" and "industrial";
   // everything else — including our new "particulate" bucket — falls
   // through to its PM2.5 default, which is exactly what we want here).
-  const primary = getPrimaryPollutant(geminiType ?? hazardType, station);
+  const primary = getPrimaryPollutant(geminiType ?? hazardType, station, standards);
   let supported = primary.value !== null && primary.delta >= SENSOR_SUPPORT_DELTA_PCT;
 
   // PM10 alone can't tell dust apart from an ordinary bad-air day (PM10
   // rises on both) — require the PM10:PM2.5 ratio to actually look
   // dust-like, not just "PM10 crossed a number".
   if (supported && hazardType === "dust" && !isDustDominant(station.pm10, station.pm25)) {
+    supported = false;
+  }
+
+  // Industrial needs a gas reading. getPrimaryPollutant falls back to PM2.5
+  // when a network reports no NO2/SO2 (all WAQI cities), and a PM2.5
+  // exceedance alone must stay "particulate", not be labelled industrial.
+  if (supported && hazardType === "industrial" && primary.name !== "NO2" && primary.name !== "SO2") {
     supported = false;
   }
 
@@ -154,6 +165,7 @@ const HAZARD_TYPES: HazardType[] = ["dust", "industrial", "particulate"];
 const SINGLE_SOURCE_AMBIENT_CONFIDENCE_CAP = 78;
 const AMBIENT_NO_SUPPORT_GRACE_HOURS = 24;
 const MAX_AMBIENT_INCIDENTS = 20;
+const MAX_TARGETS_PER_CITY = 40;
 
 // Priority order for picking the single hazardType that drives the map icon
 // color when multiple checks fire. industrial > dust > particulate keeps the
@@ -179,7 +191,7 @@ type AmbientScanTarget = {
   label: string;
   lat: number;
   lng: number;
-  station: NearbyStationReading | null;
+  station: StationReading | null;
 };
 
 type CandidateResult = {
@@ -222,20 +234,33 @@ const SATELLITE_SCAN_CONCURRENCY = 4;
 const REQUIRED_CONSECUTIVE_OBSERVATIONS = 2;
 const MAX_OBSERVATION_GAP_HOURS = 6;
 
-// Indian AQI concentration breakpoints (µg/m³). A single reading in the
-// "Poor" band can open an incident immediately. A "Moderate" reading must
-// also be anomalous and persist across two independently timestamped source
-// observations. This is more defensible than applying one arbitrary +50%
-// multiplier to pollutants with very different health-response curves.
-const AMBIENT_SENSOR_THRESHOLDS: Record<
-  "PM2.5" | "PM10" | "NO2" | "SO2",
-  { watch: number; incident: number }
-> = {
+// Delhi uses Indian AQI concentration breakpoints (µg/m³): a single reading
+// in the "Poor" band can open an incident immediately; a "Moderate" reading
+// must also be anomalous and persist across two independently timestamped
+// observations. Other capitals use their own national 24-hour limit as the
+// watch level and 1.5x that limit as the immediate-incident level; gases
+// are only tested where the network reports them (see lib/cities.ts).
+type AmbientPollutant = "PM2.5" | "PM10" | "NO2" | "SO2";
+type AmbientThresholds = Partial<Record<AmbientPollutant, { watch: number; incident: number }>>;
+
+const DELHI_AMBIENT_THRESHOLDS: AmbientThresholds = {
   "PM2.5": { watch: 61, incident: 91 },
   PM10: { watch: 101, incident: 251 },
   NO2: { watch: 81, incident: 181 },
   SO2: { watch: 81, incident: 381 },
 };
+
+function getCityAmbientThresholds(city: CityConfig): AmbientThresholds {
+  if (city.id === "delhi") return DELHI_AMBIENT_THRESHOLDS;
+  const fromStandard = (limit: number | null) =>
+    limit ? { watch: limit, incident: Math.round(limit * 1.5) } : undefined;
+  return {
+    "PM2.5": fromStandard(city.standards.pm25),
+    PM10: fromStandard(city.standards.pm10),
+    NO2: fromStandard(city.standards.no2),
+    SO2: fromStandard(city.standards.so2),
+  };
+}
 
 function median(values: Array<number | null | undefined>) {
   const usable = values
@@ -248,10 +273,10 @@ function median(values: Array<number | null | undefined>) {
     : usable[middle];
 }
 
-function buildDelhiMedianBaseline(targets: AmbientScanTarget[]): SensorBaseline {
+function buildCityMedianBaseline(targets: AmbientScanTarget[]): SensorBaseline {
   const stations = targets
     .map((target) => target.station)
-    .filter((station): station is NearbyStationReading => station !== null);
+    .filter((station): station is StationReading => station !== null);
 
   return {
     pm25: median(stations.map((station) => station.pm25)),
@@ -287,10 +312,10 @@ function historyMedian(samples: SensorHistorySample[], key: keyof SensorBaseline
 
 async function getSensorBaselineAndRecord(
   h3CellId: string,
-  station: NearbyStationReading | null,
-  delhiMedian: SensorBaseline,
-): Promise<{ baseline: SensorBaseline; source: "station_history" | "delhi_median" }> {
-  if (!station) return { baseline: delhiMedian, source: "delhi_median" };
+  station: StationReading | null,
+  cityMedian: SensorBaseline,
+): Promise<{ baseline: SensorBaseline; source: "station_history" | "city_median" }> {
+  if (!station) return { baseline: cityMedian, source: "city_median" };
 
   const baselineRef = adminDb.collection("ambientSensorBaselines").doc(h3CellId);
   const baselineSnap = await baselineRef.get();
@@ -303,10 +328,10 @@ async function getSensorBaselineAndRecord(
   };
   const hasStationHistory = Object.values(stationBaseline).some((value) => value !== null);
   const baseline: SensorBaseline = {
-    pm25: stationBaseline.pm25 ?? delhiMedian.pm25,
-    pm10: stationBaseline.pm10 ?? delhiMedian.pm10,
-    no2: stationBaseline.no2 ?? delhiMedian.no2,
-    so2: stationBaseline.so2 ?? delhiMedian.so2,
+    pm25: stationBaseline.pm25 ?? cityMedian.pm25,
+    pm10: stationBaseline.pm10 ?? cityMedian.pm10,
+    no2: stationBaseline.no2 ?? cityMedian.no2,
+    so2: stationBaseline.so2 ?? cityMedian.so2,
   };
 
   const alreadyRecorded = samples.some(
@@ -334,7 +359,7 @@ async function getSensorBaselineAndRecord(
 
   return {
     baseline,
-    source: hasStationHistory ? "station_history" : "delhi_median",
+    source: hasStationHistory ? "station_history" : "city_median",
   };
 }
 
@@ -345,19 +370,18 @@ function getBaselineValue(pollutantName: string, baseline: SensorBaseline) {
   return baseline.pm25;
 }
 
-function getAmbientSensorThresholds(pollutantName: string) {
-  return (
-    AMBIENT_SENSOR_THRESHOLDS[pollutantName as keyof typeof AMBIENT_SENSOR_THRESHOLDS] ??
-    AMBIENT_SENSOR_THRESHOLDS["PM2.5"]
-  );
+function getAmbientSensorThresholds(city: CityConfig, pollutantName: string) {
+  const thresholds = getCityAmbientThresholds(city);
+  return thresholds[pollutantName as AmbientPollutant] ?? thresholds["PM2.5"]!;
 }
 
 function applyAmbientSensorThreshold(
+  city: CityConfig,
   hazardType: HazardType,
   sensorResult: SensorSupportResult,
-  station: NearbyStationReading | null,
+  station: StationReading | null,
   baseline: SensorBaseline,
-  baselineSource: "station_history" | "delhi_median",
+  baselineSource: "station_history" | "city_median",
   cityBaseline: SensorBaseline,
 ): SensorSupportResult {
   const localBaselineValue = getBaselineValue(sensorResult.pollutantName, baseline);
@@ -381,7 +405,7 @@ function applyAmbientSensorThreshold(
   const citywideHotspot =
     cityBaselineDeltaPct !== null &&
     cityBaselineDeltaPct >= SENSOR_LOCAL_BASELINE_DELTA_PCT;
-  const thresholds = getAmbientSensorThresholds(sensorResult.pollutantName);
+  const thresholds = getAmbientSensorThresholds(city, sensorResult.pollutantName);
   const meetsWatchThreshold =
     sensorResult.pollutantValue !== null &&
     sensorResult.pollutantValue >= thresholds.watch;
@@ -389,12 +413,16 @@ function applyAmbientSensorThreshold(
     sensorResult.pollutantValue !== null &&
     sensorResult.pollutantValue >= thresholds.incident;
   const sourceSpecificEnough =
-    hazardType !== "dust" || isDustDominant(station?.pm10, station?.pm25);
+    hazardType === "dust"
+      ? isDustDominant(station?.pm10, station?.pm25)
+      : hazardType === "industrial"
+        ? sensorResult.pollutantName === "NO2" || sensorResult.pollutantName === "SO2"
+        : true;
 
   return {
     ...sensorResult,
     // A persistent hotspot can become its own station-history baseline. It
-    // still needs to surface when it is materially worse than Delhi overall;
+    // still needs to surface when it is materially worse than the city overall;
     // otherwise severe but chronic readings are incorrectly normalized away.
     supported:
       sourceSpecificEnough &&
@@ -463,7 +491,7 @@ function ambientCandidateRank(candidate: CandidateResult) {
   return 2;
 }
 
-async function resolveInactiveAmbientDocs(activeH3CellIds: Set<string>) {
+async function resolveInactiveAmbientDocs(city: CityConfig, activeH3CellIds: Set<string>) {
   const snapshot = await adminDb.collection("incidents").get();
   await Promise.all(
     snapshot.docs.map(async (incidentDoc) => {
@@ -471,11 +499,13 @@ async function resolveInactiveAmbientDocs(activeH3CellIds: Set<string>) {
       const h3CellId = incidentDoc.id.replace(/^ambient-/, "");
       const data = incidentDoc.data();
       if (activeH3CellIds.has(h3CellId) || data.status === "resolved") return;
+      // Each city ranks its own hotspots; never hide another city's.
+      if (!isInCity(city, Number(data.location?.lat), Number(data.location?.lng))) return;
 
       await incidentDoc.ref.update({
         status: "resolved",
         "validation.alertReason":
-          "Automatically hidden because stronger Delhi station hotspots are currently higher priority.",
+          "Automatically hidden because stronger station hotspots in this city are currently higher priority.",
         "validation.alertTier": false,
         "validation.promotionReason": "Below current ambient top-hotspot cutoff.",
       });
@@ -483,9 +513,8 @@ async function resolveInactiveAmbientDocs(activeH3CellIds: Set<string>) {
   );
 }
 
-async function getAmbientScanTargets(): Promise<AmbientScanTarget[]> {
-  const stationTargets = (await fetchAllStationReadings())
-    .filter((station) => isInOperationalRegion(station.lat, station.lng))
+async function getAmbientScanTargets(city: CityConfig): Promise<AmbientScanTarget[]> {
+  const stationTargets = (await fetchCityStationReadings(city))
     .map((station) => ({
       label: station.stationName,
       lat: station.lat,
@@ -508,8 +537,8 @@ async function getAmbientScanTargets(): Promise<AmbientScanTarget[]> {
 
   // Extra known pollution-prone zones: these only fill satellite-only gaps in
   // places where there is no station cell.
-  for (const cell of MONITORED_CELLS) {
-    if (!isInOperationalRegion(cell.lat, cell.lng)) continue;
+  for (const cell of city.monitoredAreas) {
+    if (!isInCity(city, cell.lat, cell.lng)) continue;
     const h3CellId = getH3CellId({
       label: cell.label,
       lat: String(cell.lat),
@@ -525,7 +554,11 @@ async function getAmbientScanTargets(): Promise<AmbientScanTarget[]> {
     }
   }
 
-  return [...targetsByCell.values()];
+  // Satellite lookups are the slow part; cap each city's scan, keeping the
+  // most polluted station cells first.
+  return [...targetsByCell.values()]
+    .sort((a, b) => (b.station?.pm25 ?? -1) - (a.station?.pm25 ?? -1))
+    .slice(0, MAX_TARGETS_PER_CITY);
 }
 
 function getTargetH3CellId(target: AmbientScanTarget) {
@@ -558,15 +591,44 @@ async function fetchSatelliteForTargets(targets: AmbientScanTarget[]) {
   return results;
 }
 
-export async function scanAmbientHotspots(): Promise<{
+export type AmbientScanSummary = {
+  cityId: string;
   scanned: number;
   promoted: AmbientScanResult[];
   watching: AmbientWatchResult[];
-}> {
+};
+
+const CITY_SCAN_CONCURRENCY = 3;
+
+/**
+ * Scans several cities (the scheduler scans all of them), a few at a time so
+ * the whole run fits the scheduler's time limit. One city failing never
+ * blocks the others.
+ */
+export async function scanAmbientHotspots(cityIds: string[] = CITIES.map((city) => city.id)) {
+  const results: Array<AmbientScanSummary | { cityId: string; error: string }> = [];
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(CITY_SCAN_CONCURRENCY, cityIds.length) }, async () => {
+      while (next < cityIds.length) {
+        const cityId = cityIds[next];
+        next += 1;
+        try {
+          results.push(await scanCityAmbientHotspots(getCity(cityId)));
+        } catch (error) {
+          results.push({ cityId, error: error instanceof Error ? error.message : String(error) });
+        }
+      }
+    }),
+  );
+  return results;
+}
+
+export async function scanCityAmbientHotspots(city: CityConfig): Promise<AmbientScanSummary> {
   const candidates: CandidateResult[] = [];
   const watching: AmbientWatchResult[] = [];
-  const targets = await getAmbientScanTargets();
-  const delhiMedianBaseline = buildDelhiMedianBaseline(targets);
+  const targets = await getAmbientScanTargets(city);
+  const cityMedianBaseline = buildCityMedianBaseline(targets);
   const satelliteByCell = await fetchSatelliteForTargets(targets);
 
   for (const target of targets) {
@@ -575,7 +637,7 @@ export async function scanAmbientHotspots(): Promise<{
     const sensorBaseline = await getSensorBaselineAndRecord(
       h3CellId,
       station,
-      delhiMedianBaseline,
+      cityMedianBaseline,
     );
 
     // Run all three checks and collect results — we write ONE doc per cell,
@@ -592,25 +654,26 @@ export async function scanAmbientHotspots(): Promise<{
 
     for (const hazardType of HAZARD_TYPES) {
       const sensorResult = applyAmbientSensorThreshold(
+        city,
         hazardType,
-        checkSensorSupport(hazardType, station),
+        checkSensorSupport(hazardType, station, city.standards),
         station,
         sensorBaseline.baseline,
         sensorBaseline.source,
-        delhiMedianBaseline,
+        cityMedianBaseline,
       );
       sensorResultsByHazard.set(hazardType, sensorResult);
     }
 
     // Satellite is an independent detection path, not merely a sensor
-    // corroborator. Evaluate every Delhi target so a valid Sentinel-5P
-    // anomaly can surface even when the nearby CPCB reading is below its
+    // corroborator. Evaluate every target so a valid Sentinel-5P anomaly can
+    // surface even when the nearby station reading is below its
     // promotion threshold. Earth Engine responses remain cached per H3 cell.
     const satellite = satelliteByCell.get(h3CellId) ?? null;
 
     for (const hazardType of HAZARD_TYPES) {
       const sensorResult = sensorResultsByHazard.get(hazardType) ??
-        checkSensorSupport(hazardType, station);
+        checkSensorSupport(hazardType, station, city.standards);
       const satelliteResult = checkSatelliteSupport(hazardType, satellite);
       const sensorSupported = meetsAmbientSensorThreshold(hazardType, sensorResult);
       const tier = determineTier({
@@ -636,8 +699,8 @@ export async function scanAmbientHotspots(): Promise<{
     const detectionState = detectionStateSnap.data();
 
     // Nothing triggered for this cell anymore. Do not resolve immediately:
-    // public CPCB feeds can lag or temporarily omit pollutants, so one weak
-    // scan should not make the Delhi auto-detection layer collapse.
+    // public station feeds can lag or temporarily omit pollutants, so one weak
+    // scan should not make the city's auto-detection layer collapse.
     if (passedChecks.length === 0) {
       if ((detectionState?.consecutiveObservations ?? 0) > 0) {
         await detectionStateRef.set(
@@ -781,7 +844,7 @@ export async function scanAmbientHotspots(): Promise<{
   });
   const topCandidates = rankedCandidates.slice(0, MAX_AMBIENT_INCIDENTS);
   const topCandidateIds = new Set(topCandidates.map((candidate) => candidate.h3CellId));
-  await resolveInactiveAmbientDocs(topCandidateIds);
+  await resolveInactiveAmbientDocs(city, topCandidateIds);
 
   for (const candidate of candidates) {
     if (topCandidateIds.has(candidate.h3CellId)) continue;
@@ -922,7 +985,8 @@ export async function scanAmbientHotspots(): Promise<{
           baselineSource: sensorResult.baselineSource,
           distanceKm: sensorResult.distanceKm ?? undefined,
           lastUpdated: sensorResult.lastUpdated ?? undefined,
-          source: "CPCB",
+          source: target.station?.source ?? "unavailable",
+          stationName: target.station?.stationName,
           // A single snapshot can't establish a trend; report it against the
           // station's own recorded baseline when one exists.
           trend:
@@ -963,5 +1027,5 @@ export async function scanAmbientHotspots(): Promise<{
     promoted.push({ cell: target.label, hazardType, tier, h3CellId });
   }
 
-  return { scanned: targets.length, promoted, watching };
+  return { cityId: city.id, scanned: targets.length, promoted, watching };
 }

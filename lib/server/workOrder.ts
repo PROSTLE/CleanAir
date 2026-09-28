@@ -4,33 +4,30 @@ import { adminServerTimestamp } from "@/lib/firebaseAdmin";
 import { resolveIncidentHazardType } from "@/lib/firestoreReports";
 import type { IncidentContext, Target } from "@/lib/server/incidentContext";
 import { generateJson } from "@/lib/server/gemini";
-import type { HazardType, WorkOrder } from "@/lib/types";
+import { getCity, resolveCityForPoint, type CityConfig } from "@/lib/cities";
+import type { WorkOrder } from "@/lib/types";
 
-// Suggested first-responder agency per hazard. The operator confirms routing;
-// the work order says "suggested" so nobody mistakes it for a mandate.
-const DEPARTMENT_BY_HAZARD: Record<HazardType, string> = {
-  fire: "Municipal Corporation of Delhi (MCD) — Sanitation / waste-burning enforcement",
-  dust: "Municipal Corporation of Delhi (MCD) — construction & demolition dust enforcement",
-  industrial: "Delhi Pollution Control Committee (DPCC)",
-  smog: "Delhi Traffic Police — traffic management",
-  particulate: "Delhi Pollution Control Committee (DPCC) — field inspection",
-};
+function workOrderSchema(localLanguage: CityConfig["localLanguage"]) {
+  const required = ["priority", "subject", "summary", "bodyEn", "actions", "evidenceCited"];
+  return {
+    type: "OBJECT",
+    properties: {
+      priority: { type: "STRING", enum: ["immediate", "within_24h", "routine"] },
+      subject: { type: "STRING" },
+      summary: { type: "STRING" },
+      bodyEn: { type: "STRING" },
+      ...(localLanguage ? { bodyLocal: { type: "STRING" } } : {}),
+      actions: { type: "ARRAY", items: { type: "STRING" } },
+      evidenceCited: { type: "ARRAY", items: { type: "STRING" } },
+    },
+    required: localLanguage ? [...required, "bodyLocal"] : required,
+  };
+}
 
-const WORK_ORDER_SCHEMA = {
-  type: "OBJECT",
-  properties: {
-    priority: { type: "STRING", enum: ["immediate", "within_24h", "routine"] },
-    subject: { type: "STRING" },
-    summary: { type: "STRING" },
-    bodyEn: { type: "STRING" },
-    bodyHi: { type: "STRING" },
-    actions: { type: "ARRAY", items: { type: "STRING" } },
-    evidenceCited: { type: "ARRAY", items: { type: "STRING" } },
-  },
-  required: ["priority", "subject", "summary", "bodyEn", "bodyHi", "actions", "evidenceCited"],
-};
-
-type GeneratedWorkOrder = Omit<WorkOrder, "department" | "generatedAt" | "generatedBy" | "model">;
+type GeneratedWorkOrder = Omit<
+  WorkOrder,
+  "department" | "generatedAt" | "generatedBy" | "model" | "localLanguage" | "bodyHi"
+>;
 
 function compactFacts(target: Target, context: IncidentContext | null) {
   const data = target.data;
@@ -53,10 +50,12 @@ function compactFacts(target: Target, context: IncidentContext | null) {
           distanceKm: validation.sensor.distanceKm,
           pollutant: validation.sensor.primaryName,
           value: validation.sensor.primaryValue,
-          pctAboveCpcb24hStandard: validation.sensor.primaryDelta,
+          pctAboveNational24hStandard: validation.sensor.primaryDelta,
+          network: validation.sensor.source,
+          operator: validation.sensor.attribution ?? null,
           updated: validation.sensor.lastUpdated,
         }
-      : "no CPCB station with data nearby",
+      : "no ground station with data nearby",
     satellite: validation.satellite?.signal ?? null,
     firstSeen: data.createdAt?.toDate?.().toISOString?.() ?? null,
     triggerPollutants: data.triggerPollutants ?? null,
@@ -94,23 +93,26 @@ export async function generateWorkOrder(
   operatorUid: string | null,
 ): Promise<WorkOrder> {
   const { facts, hazardType } = compactFacts(target, context);
-  const department = DEPARTMENT_BY_HAZARD[hazardType];
+  const city = resolveCityForPoint(target.lat, target.lng) ?? getCity("delhi");
+  const department = city.authorities[hazardType];
+  const localLanguage = city.localLanguage;
 
-  const prompt = `Draft a municipal work order for this verified air-pollution hotspot in Delhi.
+  const prompt = `Draft a municipal work order for this verified air-pollution hotspot in ${city.name}, ${city.country}.
 Addressed to: ${department} (suggested routing; the operator will confirm).
+Sensor percentages compare against ${city.standards.source}.
 
 Use ONLY the facts below. Do not invent names, officers, phone numbers, measurements, or legal
 section numbers. If a fact is missing, leave it out rather than guessing. Keep bodyEn under 180
-words and write bodyHi as a faithful Hindi (Devanagari) version of bodyEn. actions: 3-5 concrete
+words${localLanguage ? ` and write bodyLocal as a faithful ${localLanguage.name} (language code "${localLanguage.code}") version of bodyEn` : ""}. actions: 3-5 concrete
 field steps appropriate to the hazard. evidenceCited: short phrases naming which facts justify the
-order (e.g. "3 citizen reports", "CPCB PM2.5 +85% at <station>"). Priority: "immediate" for an
+order (e.g. "3 citizen reports", "PM2.5 +85% vs national standard at <station>"). Priority: "immediate" for an
 active fire or sensitive sites nearby with high confidence, "within_24h" for confirmed hotspots,
 otherwise "routine".
 
 FACTS (JSON):
 ${JSON.stringify(facts, null, 2)}`;
 
-  const { data, model } = await generateJson<GeneratedWorkOrder>(prompt, WORK_ORDER_SCHEMA, {
+  const { data, model } = await generateJson<GeneratedWorkOrder>(prompt, workOrderSchema(localLanguage), {
     systemInstruction:
       "You write concise, factual municipal work orders. You never fabricate details that are not in the provided facts.",
     temperature: 0.2,
@@ -122,7 +124,8 @@ ${JSON.stringify(facts, null, 2)}`;
     subject: data.subject,
     summary: data.summary,
     bodyEn: data.bodyEn,
-    bodyHi: data.bodyHi,
+    bodyLocal: localLanguage ? (data.bodyLocal ?? null) : null,
+    localLanguage,
     actions: (data.actions ?? []).slice(0, 6),
     evidenceCited: (data.evidenceCited ?? []).slice(0, 8),
     generatedAt: new Date().toISOString(),

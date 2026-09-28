@@ -501,18 +501,18 @@ a {
   box-shadow: none;
 }
 
-.operations-map-shell .google-map-panel {
+.operations-map-shell .hotspot-map-panel {
   min-height: 548px;
 }
 
-.google-map-panel {
+.hotspot-map-panel {
   position: relative;
   min-height: 650px;
   overflow: hidden;
   background: var(--surface-tint);
 }
 
-.google-map-canvas {
+.hotspot-map-canvas {
   position: absolute;
   inset: 0;
   width: 100%;
@@ -520,7 +520,48 @@ a {
   min-height: inherit;
 }
 
-.google-map-state {
+/* maplibre-gl.css makes the map container position: relative, so size it directly. */
+.hotspot-map-root {
+  width: 100%;
+  height: 100%;
+}
+
+.hotspot-marker {
+  display: block;
+  padding: 0;
+  border: 0;
+  background: none;
+  line-height: 0;
+  cursor: pointer;
+}
+
+.hotspot-marker svg {
+  display: block;
+}
+
+.hotspot-marker:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: 2px;
+}
+
+/* Brief bounce when a hotspot is selected (was Google's BOUNCE animation). */
+.hotspot-marker.is-bouncing svg {
+  animation: hotspot-bounce 0.35s ease-in-out 2;
+}
+
+@keyframes hotspot-bounce {
+  50% {
+    transform: translateY(-8px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hotspot-marker.is-bouncing svg {
+    animation: none;
+  }
+}
+
+.hotspot-map-state {
   position: absolute;
   inset: 0;
   display: grid;
@@ -535,7 +576,7 @@ a {
   text-align: center;
 }
 
-.google-map-state strong {
+.hotspot-map-state strong {
   color: var(--ink);
   font-size: 1.1rem;
 }
@@ -580,22 +621,6 @@ a {
   outline-offset: 2px;
 }
 
-.map3d {
-  position: absolute;
-  inset: 0;
-  z-index: 2;
-  background: var(--surface-tint);
-}
-
-.map3d[hidden] {
-  display: none;
-}
-
-/* maplibre-gl.css makes the container position: relative, so size it directly. */
-.map3d-canvas {
-  width: 100%;
-  height: 100%;
-}
 
 .map3d-legend {
   position: absolute;
@@ -732,7 +757,7 @@ a {
   cursor: pointer;
 }
 
-.map3d .maplibregl-popup-content {
+.hotspot-map-panel .maplibregl-popup-content {
   border-radius: 10px;
   padding: 10px 12px;
   box-shadow: var(--shadow-md);
@@ -851,18 +876,18 @@ a {
   white-space: nowrap;
 }
 
-.google-map-infowindow {
+.hotspot-map-infowindow {
   display: grid;
   gap: 4px;
   color: #172033;
   font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
 }
 
-.google-map-infowindow strong {
+.hotspot-map-infowindow strong {
   font-size: 0.92rem;
 }
 
-.google-map-infowindow span {
+.hotspot-map-infowindow span {
   color: #667085;
   font-size: 0.78rem;
   text-transform: capitalize;
@@ -1009,6 +1034,13 @@ a {
   color: var(--teal-dark);
   font-family: var(--font-geist-mono), monospace;
   flex-shrink: 0;
+}
+
+.rp-location-scope {
+  display: block;
+  margin: -6px 0 12px;
+  color: var(--muted);
+  font-size: 0.8rem;
 }
 
 /* ── Upload zone ─────────────────────────────────────────────────────────── */
@@ -1769,6 +1801,12 @@ a {
     z-index: 1000;
   }
 
+  /* Inside the sticky page wrapper the nav stays in the padded container,
+     so 100vw would overflow it by the page gutter. */
+  .sv-navbar-wrap .site-nav {
+    width: 100%;
+  }
+
   .nav-links {
     display: none;
     position: absolute;
@@ -1906,7 +1944,7 @@ a {
     min-width: 0;
   }
 
-  .google-map-panel,
+  .hotspot-map-panel,
   .public-map-shell {
     min-height: 520px;
   }
@@ -2107,7 +2145,7 @@ a {
     border-radius: 6px;
   }
 
-  .google-map-panel {
+  .hotspot-map-panel {
     min-height: clamp(360px, 58dvh, 430px);
   }
 
@@ -2124,38 +2162,23 @@ a {
     padding: 10px;
   }
 
-  .google-map-panel .gm-style-iw-c {
-    max-width: calc(100vw - 96px) !important;
-    border-radius: 8px !important;
-    padding: 12px !important;
+  .hotspot-map-panel .maplibregl-popup-content {
+    max-height: 190px;
+    overflow: auto;
   }
 
-  .google-map-panel .gm-style-iw-d {
-    max-height: 154px !important;
-    overflow: auto !important;
-  }
-
-  .google-map-panel .gm-style-iw-chr {
-    height: 24px;
-  }
-
-  .google-map-panel .gm-ui-hover-effect {
-    width: 36px !important;
-    height: 36px !important;
-  }
-
-  .google-map-infowindow {
+  .hotspot-map-infowindow {
     gap: 5px;
     min-width: 0;
     overflow-wrap: anywhere;
   }
 
-  .google-map-infowindow strong {
+  .hotspot-map-infowindow strong {
     font-size: 0.84rem;
     line-height: 1.3;
   }
 
-  .google-map-infowindow span {
+  .hotspot-map-infowindow span {
     font-size: 0.74rem;
     line-height: 1.35;
   }

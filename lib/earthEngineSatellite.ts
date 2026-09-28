@@ -3,6 +3,7 @@ import "server-only";
 import * as ee from "@google/earthengine";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { getCity, resolveCityForPoint, type CityConfig } from "@/lib/cities";
 import { getH3CellId, haversineKm } from "@/lib/geo";
 
 const EE_KEY_PATH = path.join(process.cwd(), "credentials", "earth-engine-key.json");
@@ -28,9 +29,6 @@ const SAMPLE_BUFFER_METERS = 1500;
 const FIRE_WINDOW_HOURS = 48;
 const MAX_FIRE_POINTS = 800;
 
-// Punjab + Haryana + Delhi NCR: the region whose crop-residue and waste fires
-// drive Delhi's autumn smog episodes. [minLng, minLat, maxLng, maxLat]
-export const FIRE_REGION_BOUNDS = [73.8, 27.8, 78.2, 32.6] as const;
 
 // Scores compare the current 3-day median to the same point's previous
 // 90-day median. A short current window reacts faster to acute events
@@ -100,7 +98,9 @@ export type FireHotspotResult = {
   fires: FireHotspot[];
   windowStart: string;
   windowEnd: string;
-  bounds: typeof FIRE_REGION_BOUNDS;
+  /** Each city's upwind fire region (lib/cities.ts), [minLng, minLat, maxLng, maxLat]. */
+  bounds: CityConfig["fireRegion"]["bounds"];
+  regionLabel: string;
   truncated: boolean;
   source: "NASA FIRMS via Earth Engine";
   computedAt: string;
@@ -113,8 +113,8 @@ type CacheEntry = {
 };
 
 const cache = new Map<string, CacheEntry>();
-let fireCache: { expiresAt: number; value: FireHotspotResult } | null = null;
-let fireInFlight: Promise<FireHotspotResult> | null = null;
+const fireCache = new Map<string, { expiresAt: number; value: FireHotspotResult }>();
+const fireInFlight = new Map<string, Promise<FireHotspotResult>>();
 let initPromise: Promise<void> | null = null;
 
 function getCacheKey(lat: number, lng: number, windowEndDate: string) {
@@ -449,7 +449,7 @@ type SampledFeatureCollection = {
   }>;
 };
 
-async function fetchRegionalFireHotspots(): Promise<FireHotspotResult> {
+async function fetchRegionalFireHotspots(city: CityConfig): Promise<FireHotspotResult> {
   const end = new Date();
   const start = new Date(end.getTime() - FIRE_WINDOW_HOURS * 60 * 60 * 1000);
   const windowStart = start.toISOString();
@@ -458,7 +458,7 @@ async function fetchRegionalFireHotspots(): Promise<FireHotspotResult> {
 
   try {
     await withTimeout(ensureEarthEngineReady(), REQUEST_TIMEOUT_MS, "Earth Engine auth");
-    const [minLng, minLat, maxLng, maxLat] = FIRE_REGION_BOUNDS;
+    const [minLng, minLat, maxLng, maxLat] = city.fireRegion.bounds;
     const region = ee.Geometry.Rectangle([minLng, minLat, maxLng, maxLat]);
     // FIRMS images are masked everywhere except fire pixels, so sampling the
     // max composite returns one feature per detected fire pixel.
@@ -494,7 +494,8 @@ async function fetchRegionalFireHotspots(): Promise<FireHotspotResult> {
       fires: fires.slice(0, MAX_FIRE_POINTS),
       windowStart,
       windowEnd,
-      bounds: FIRE_REGION_BOUNDS,
+      bounds: city.fireRegion.bounds,
+      regionLabel: city.fireRegion.label,
       truncated: fires.length > MAX_FIRE_POINTS,
       source: "NASA FIRMS via Earth Engine",
       computedAt,
@@ -504,7 +505,8 @@ async function fetchRegionalFireHotspots(): Promise<FireHotspotResult> {
       fires: [],
       windowStart,
       windowEnd,
-      bounds: FIRE_REGION_BOUNDS,
+      bounds: city.fireRegion.bounds,
+      regionLabel: city.fireRegion.label,
       truncated: false,
       source: "NASA FIRMS via Earth Engine",
       computedAt,
@@ -513,19 +515,20 @@ async function fetchRegionalFireHotspots(): Promise<FireHotspotResult> {
   }
 }
 
-/** Active fires across Punjab/Haryana/Delhi over the last 48 h, cached 1 h. */
-export async function getRegionalFireHotspots(options: { refresh?: boolean } = {}) {
-  if (!options.refresh && fireCache && fireCache.expiresAt > Date.now()) {
-    return fireCache.value;
+/** Active fires across a city's upwind region over the last 48 h, cached 1 h. */
+export async function getRegionalFireHotspots(cityId: string, options: { refresh?: boolean } = {}) {
+  const city = getCity(cityId);
+  const hit = fireCache.get(city.id);
+  if (!options.refresh && hit && hit.expiresAt > Date.now()) return hit.value;
+
+  let pending = fireInFlight.get(city.id);
+  if (!pending) {
+    pending = fetchRegionalFireHotspots(city).finally(() => fireInFlight.delete(city.id));
+    fireInFlight.set(city.id, pending);
   }
-  fireInFlight ??= fetchRegionalFireHotspots().finally(() => {
-    fireInFlight = null;
-  });
-  const value = await fireInFlight;
+  const value = await pending;
   // Don't pin an error for an hour; retry on the next request instead.
-  if (!value.error) {
-    fireCache = { expiresAt: Date.now() + FIRE_CACHE_TTL_MS, value };
-  }
+  if (!value.error) fireCache.set(city.id, { expiresAt: Date.now() + FIRE_CACHE_TTL_MS, value });
   return value;
 }
 
@@ -540,7 +543,20 @@ export type NearbyFireSummary = {
 };
 
 export async function getFiresNear(lat: number, lng: number, radiusKm = 5): Promise<NearbyFireSummary> {
-  const regional = await getRegionalFireHotspots();
+  const city = resolveCityForPoint(lat, lng);
+  if (!city) {
+    const now = new Date().toISOString();
+    return {
+      count: 0,
+      nearestKm: null,
+      maxBrightnessK: null,
+      radiusKm,
+      windowStart: now,
+      windowEnd: now,
+      error: "This point is outside every monitored city's fire region.",
+    };
+  }
+  const regional = await getRegionalFireHotspots(city.id);
   const nearby = regional.fires
     .map((fire) => ({ ...fire, distanceKm: haversineKm(lat, lng, fire.lat, fire.lng) }))
     .filter((fire) => fire.distanceKm <= radiusKm);

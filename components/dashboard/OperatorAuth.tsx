@@ -4,6 +4,18 @@ import { useEffect, useRef, useState } from "react";
 import { useOperator } from "@/components/dashboard/OperatorContext";
 import { useT } from "@/lib/languageContext";
 
+/** The operator workspace on /dashboard; sign-in lands here. */
+export const COMMAND_CENTER_ID = "command-center";
+
+function goToCommandCenter() {
+  const target = document.getElementById(COMMAND_CENTER_ID);
+  if (!target) return;
+  window.history.replaceState(null, "", `#${COMMAND_CENTER_ID}`);
+  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  target.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "start" });
+  target.focus({ preventScroll: true });
+}
+
 export default function OperatorAuth() {
   const t = useT();
   const { status, email, error, signIn, signOut } = useOperator();
@@ -12,6 +24,20 @@ export default function OperatorAuth() {
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const emailRef = useRef<HTMLInputElement>(null);
+  // Set by a sign-in from this dialog, so a session restored on page load
+  // doesn't yank the page down to the queue.
+  const redirectAfterSignIn = useRef(false);
+
+  // The server decides who is an operator, so only move once it confirms.
+  useEffect(() => {
+    if (!redirectAfterSignIn.current) return;
+    if (status === "operator") {
+      redirectAfterSignIn.current = false;
+      goToCommandCenter();
+    } else if (status === "not_operator" || status === "signed_out") {
+      redirectAfterSignIn.current = false;
+    }
+  }, [status]);
 
   useEffect(() => {
     if (!open) return;
@@ -66,6 +92,7 @@ export default function OperatorAuth() {
               setSubmitting(true);
               try {
                 await signIn(formEmail, password);
+                redirectAfterSignIn.current = true;
                 setPassword("");
                 setOpen(false);
               } catch {

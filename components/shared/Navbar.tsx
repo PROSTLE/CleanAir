@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { useT } from "@/lib/languageContext";
+import CitySelector from "@/components/shared/CitySelector";
 import LanguageSelector from "@/components/shared/LanguageSelector";
 
 import VayuSetuLogo from "@/components/shared/VayuSetuLogo";
@@ -116,6 +117,10 @@ export default function Navbar() {
           <Link href="/report" className="btn btn-primary" onClick={() => setIsMenuOpen(false)} style={{ padding: "8px 16px", fontSize: "0.85rem", marginInlineStart: "8px" }}>
             {t("nav_report_button")}
           </Link>
+          <div className="nav-language">
+            <span className="nav-language-label">{t("city_select_label")}</span>
+            <CitySelector onSelect={() => setIsMenuOpen(false)} />
+          </div>
           <div className="nav-language">
             <span className="nav-language-label">Language</span>
             <LanguageSelector onSelect={() => setIsMenuOpen(false)} />

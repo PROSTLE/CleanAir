@@ -1080,6 +1080,11 @@
   background: var(--sv-bg-warm);
 }
 
+.sv-reports-map .hotspot-panel {
+  /* The hero's 520px cap would leave a blank strip in this wider slot. */
+  max-width: none;
+}
+
 .sv-reports-map .hotspot-panel,
 .sv-reports-map .map-preview {
   height: 100%;

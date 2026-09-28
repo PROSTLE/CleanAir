@@ -5,12 +5,13 @@ import { useEffect, useState } from "react";
 import { collection, limit, onSnapshot, orderBy, query } from "firebase/firestore";
 import HotspotPreview from "@/components/landing/HotspotPreview";
 import LiveIndicator from "@/components/shared/LiveIndicator";
+import { isInCity } from "@/lib/cities";
+import { useCity } from "@/lib/cityContext";
 import { db, isFirebaseConfigured } from "@/lib/firebase";
 import { hasPollutionSignal, reportToIncident, type FirestoreReport } from "@/lib/firestoreReports";
 import type { Incident } from "@/lib/types";
 import { useT } from "@/lib/languageContext";
 
-const HAS_MAPS_KEY = Boolean(process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY);
 
 /**
  * Live citizen reporting — lifted out of the hero so the fold stays editorial.
@@ -19,6 +20,7 @@ const HAS_MAPS_KEY = Boolean(process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY);
  */
 export default function LiveReports() {
   const t = useT();
+  const { city, ready: cityReady } = useCity();
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [reports, setReports] = useState<Incident[]>([]);
   const [connected, setConnected] = useState(false);
@@ -34,7 +36,7 @@ export default function LiveReports() {
 
   useEffect(() => {
     if (!isFirebaseConfigured || !db) return;
-    const reportsQuery = query(collection(db, "reports"), orderBy("createdAt", "desc"), limit(20));
+    const reportsQuery = query(collection(db, "reports"), orderBy("createdAt", "desc"), limit(80));
     return onSnapshot(reportsQuery, (snapshot) => {
       setReports(
         snapshot.docs
@@ -46,9 +48,13 @@ export default function LiveReports() {
     });
   }, []);
 
-  const active = incidents.filter((incident) => incident.status !== "resolved");
+  // Firestore holds every city; the landing stats follow the selected one.
+  const inCity = (incident: Incident) => isInCity(city, incident.latitude, incident.longitude);
+  const cityIncidents = incidents.filter(inCity);
+  const cityReports = reports.filter(inCity).slice(0, 20);
+  const active = cityIncidents.filter((incident) => incident.status !== "resolved");
   const critical = active.filter((incident) => incident.severity === "critical").length;
-  const resolvedToday = incidents.filter((incident) => {
+  const resolvedToday = cityIncidents.filter((incident) => {
     if (incident.status !== "resolved" || !incident.resolvedAt) return false;
     return new Date(incident.resolvedAt).toDateString() === new Date().toDateString();
   }).length;
@@ -67,7 +73,7 @@ export default function LiveReports() {
     },
     {
       label: t("reports_stat_queue"),
-      value: connected ? String(reports.length) : placeholder,
+      value: connected ? String(cityReports.length) : placeholder,
       detail: t("reports_stat_queue_detail"),
     },
     {
@@ -107,14 +113,7 @@ export default function LiveReports() {
         </ul>
 
         <div className="sv-reports-map">
-          {HAS_MAPS_KEY ? (
-            <HotspotPreview incidents={reports.slice(0, 6)} />
-          ) : (
-            <div className="sv-map-placeholder">
-              <span className="sv-map-placeholder-grid" aria-hidden="true" />
-              <p>{t("reports_map_unconfigured")}</p>
-            </div>
-          )}
+          {cityReady && <HotspotPreview key={city.id} incidents={cityReports.slice(0, 6)} />}
         </div>
       </div>
     </section>

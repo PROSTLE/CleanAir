@@ -2,11 +2,6 @@ import "server-only";
 
 import { createHash } from "node:crypto";
 import { FieldValue } from "firebase-admin/firestore";
-import {
-  getNearestStationReading,
-  getPm25DeltaFromReference,
-  getPrimaryPollutant,
-} from "@/lib/cpcbSensor";
 import { getFiresNear, getSatelliteDataForPoint } from "@/lib/earthEngineSatellite";
 import { adminDb, adminServerTimestamp } from "@/lib/firebaseAdmin";
 import {
@@ -17,7 +12,7 @@ import {
   type Classification,
 } from "@/lib/geminiClassifier";
 import { getH3CellId, toCoordinate } from "@/lib/geo";
-import { getWindData } from "@/lib/openWeather";
+import { getWindData } from "@/lib/weather";
 import { recordPollutionSnapshot } from "@/lib/pollutionSnapshots";
 import {
   computeFusionConfidence,
@@ -26,6 +21,12 @@ import {
 } from "@/lib/fusionConfidence";
 import { generateContent, getText } from "@/lib/server/gemini";
 import { promoteCellIfThresholdPassed } from "@/lib/server/promotion";
+import {
+  getNearestStationReading,
+  getPm25DeltaFromReference,
+  getPrimaryPollutant,
+  standardsForPoint,
+} from "@/lib/stations";
 import { FIRMS_SUPPORT_RADIUS_KM, isSensorReadingFresh } from "@/lib/supportEvidence";
 import type { IntegrityFlag, ReportIntegrity } from "@/lib/types";
 
@@ -178,7 +179,7 @@ function getPostClassificationReason(classification: Classification, excluded: b
 
 /**
  * Classifies one report end-to-end: Gemini vision → integrity checks →
- * CPCB / Sentinel-5P / FIRMS / wind context → fusion → promotion. Idempotent:
+ * ground-station / Sentinel-5P / FIRMS / wind context → fusion → promotion. Idempotent:
  * a report already past `pending`/`classification_failed` is returned as-is,
  * so replays (WhatsApp retries, the cron sweeper) never double-bill Gemini.
  */
@@ -303,7 +304,10 @@ export async function classifyReport(
         ])
       : [null, null, null, null];
 
-    const primaryPollutant = getPrimaryPollutant(classification.type, nearestStation);
+    const standards = hasCoordinates ? standardsForPoint(lat, lng) : null;
+    const primaryPollutant = standards
+      ? getPrimaryPollutant(classification.type, nearestStation, standards)
+      : { name: "PM2.5", value: null, delta: 0 };
     const sensorFresh = nearestStation ? isSensorReadingFresh(nearestStation.lastUpdated) : false;
     const sensorValidation = nearestStation
       ? {
@@ -312,13 +316,14 @@ export async function classifyReport(
           no2: nearestStation.no2,
           pm10: nearestStation.pm10,
           pm25: nearestStation.pm25,
-          pm25Delta: getPm25DeltaFromReference(nearestStation.pm25),
+          pm25Delta: standards ? getPm25DeltaFromReference(nearestStation.pm25, standards) : null,
           primaryDelta: primaryPollutant.delta,
           primaryName: primaryPollutant.name,
           primaryValue: primaryPollutant.value,
           so2: nearestStation.so2,
           source: nearestStation.source,
           stationName: nearestStation.stationName,
+          attribution: nearestStation.attribution,
           // A single reading can't show a trend; only freshness is known.
           trend: "insufficient_data" as SensorTrend,
           fresh: sensorFresh,

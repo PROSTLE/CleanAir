@@ -3,10 +3,10 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { collection, limit, onSnapshot, orderBy, query } from "firebase/firestore";
-import GoogleHotspotMap, { type FireMarker } from "@/components/map/GoogleHotspotMap";
+import HotspotMap, { type FireMarker } from "@/components/map/HotspotMap";
 import IncidentDrawer, { type DrawerTarget } from "@/components/dashboard/IncidentDrawer";
 import ModelQualityCard from "@/components/dashboard/ModelQualityCard";
-import OperatorAuth from "@/components/dashboard/OperatorAuth";
+import OperatorAuth, { COMMAND_CENTER_ID } from "@/components/dashboard/OperatorAuth";
 import OperatorCopilot from "@/components/dashboard/OperatorCopilot";
 import Icon from "@/components/shared/Icon";
 import LiveIndicator from "@/components/shared/LiveIndicator";
@@ -16,7 +16,8 @@ import {
   reportToIncident,
   type FirestoreReport,
 } from "@/lib/firestoreReports";
-import { isInOperationalRegion } from "@/lib/operationalRegion";
+import { cityTimeZoneLabel, formatCityTime, isInCity, type CityConfig } from "@/lib/cities";
+import { useCity } from "@/lib/cityContext";
 import { parseSensorTimestamp, priorityRank, TIER_LABELS } from "@/lib/supportEvidence";
 import { formatStatus, getIncidentAge } from "@/components/command/commandData";
 import type { HazardType, Incident, Severity } from "@/lib/types";
@@ -31,6 +32,7 @@ const SEVERITIES: Severity[] = ["critical", "medium", "low"];
 type Integrations = Record<string, boolean>;
 
 type FireFeed = {
+  cityId: string;
   fires: FireMarker[];
   windowStart: string;
   windowEnd: string;
@@ -38,11 +40,8 @@ type FireFeed = {
   error?: string;
 };
 
-function isLive(incident: Incident) {
-  return (
-    incident.status !== "resolved" &&
-    isInOperationalRegion(incident.latitude, incident.longitude)
-  );
+function isLive(incident: Incident, city: CityConfig) {
+  return incident.status !== "resolved" && isInCity(city, incident.latitude, incident.longitude);
 }
 
 /** Renders a count, or EMPTY when there is nothing connected to count. */
@@ -60,12 +59,13 @@ function compareIncidents(a: Incident, b: Incident) {
 
 export default function DashboardView() {
   const t = useT();
+  const { city, ready: cityReady } = useCity();
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [reports, setReports] = useState<Incident[]>([]);
   const [connected, setConnected] = useState(false);
   const [feedError, setFeedError] = useState<string | null>(null);
   const [integrations, setIntegrations] = useState<Integrations | null>(null);
-  const [fireFeed, setFireFeed] = useState<FireFeed | null>(null);
+  const [fireFeedState, setFireFeed] = useState<FireFeed | null>(null);
   const [showFires, setShowFires] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
@@ -109,13 +109,13 @@ export default function DashboardView() {
   // trigger; this keeps the layer fresh during demos. The route enforces
   // its own cooldown.
   useEffect(() => {
-    if (!isFirebaseConfigured) return;
+    if (!isFirebaseConfigured || !cityReady) return;
     const controller = new AbortController();
-    fetch("/api/scan-ambient", { signal: controller.signal }).catch(() => {
+    fetch(`/api/scan-ambient?city=${city.id}`, { signal: controller.signal }).catch(() => {
       /* scan failures surface in server logs; the feed still renders */
     });
     return () => controller.abort();
-  }, []);
+  }, [city.id, cityReady]);
 
   useEffect(() => {
     let cancelled = false;
@@ -127,18 +127,31 @@ export default function DashboardView() {
       .catch(() => {
         /* status panel just stays unknown */
       });
-    fetch("/api/fires")
-      .then(async (r) => (await r.json()) as FireFeed)
-      .then((data) => {
-        if (!cancelled) setFireFeed(data);
-      })
-      .catch(() => {
-        if (!cancelled) setFireFeed({ fires: [], windowStart: "", windowEnd: "", truncated: false, error: "unavailable" });
-      });
     return () => {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (!cityReady) return;
+    let cancelled = false;
+    fetch(`/api/fires?city=${city.id}`)
+      .then(async (r) => (await r.json()) as Omit<FireFeed, "cityId">)
+      .then((data) => {
+        if (!cancelled) setFireFeed({ ...data, cityId: city.id });
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setFireFeed({ cityId: city.id, fires: [], windowStart: "", windowEnd: "", truncated: false, error: "unavailable" });
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [city.id, cityReady]);
+
+  // Only show fires fetched for the city currently selected.
+  const fireFeed = fireFeedState?.cityId === city.id ? fireFeedState : null;
 
   useEffect(() => {
     if (!toast) return;
@@ -146,10 +159,13 @@ export default function DashboardView() {
     return () => window.clearTimeout(id);
   }, [toast]);
 
-  const active = useMemo(() => incidents.filter(isLive).sort(compareIncidents), [incidents]);
+  const active = useMemo(
+    () => incidents.filter((incident) => isLive(incident, city)).sort(compareIncidents),
+    [city, incidents],
+  );
   const queue = useMemo(
-    () => reports.filter((r) => isLive(r) && !r.evidence?.alertTier),
-    [reports],
+    () => reports.filter((r) => isLive(r, city) && !r.evidence?.alertTier),
+    [city, reports],
   );
 
   const selectedTarget: DrawerTarget | null = useMemo(() => {
@@ -203,7 +219,8 @@ export default function DashboardView() {
     [active],
   );
   // CPCB stamps are "DD-MM-YYYY HH:MM:SS" in IST, which `new Date()` either
-  // rejects ("Invalid Date") or reads month-first. Use the shared parser.
+  // rejects ("Invalid Date") or reads month-first. Use the shared parser
+  // (it also reads WAQI's ISO timestamps).
   const sensorUpdatedMs = parseSensorTimestamp(sensor?.lastUpdated);
 
   const maxHazard = Math.max(1, ...hazardMix.map((h) => h.count));
@@ -249,12 +266,16 @@ export default function DashboardView() {
 
   const integrationRows = [
     { id: "firestore", label: t("dash_src_firestore"), ok: isFirebaseConfigured },
-    { id: "maps", label: t("dash_src_maps"), ok: Boolean(process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY) },
+    { id: "maps", label: t("dash_src_maps"), ok: true },
     { id: "gemini", label: t("dash_src_gemini"), ok: integrations?.gemini },
-    { id: "cpcb", label: t("dash_src_cpcb"), ok: integrations?.cpcb },
+    {
+      id: "stations",
+      label: t("dash_src_stations").replace("{network}", city.stations.network),
+      ok: city.stations.provider === "cpcb" ? integrations?.cpcb : integrations?.waqi,
+    },
     { id: "earthEngine", label: t("dash_src_earth_engine"), ok: integrations?.earthEngine },
     { id: "bigQuery", label: t("dash_src_bigquery"), ok: integrations?.bigQuery },
-    { id: "openWeather", label: t("dash_src_openweather"), ok: integrations?.openWeather },
+    { id: "weather", label: t("dash_src_weather"), ok: integrations?.weather },
     { id: "googleAirQuality", label: t("dash_src_air_quality"), ok: integrations?.googleAirQuality },
     { id: "places", label: t("dash_src_places"), ok: integrations?.places },
     { id: "whatsappNotify", label: t("dash_src_whatsapp"), ok: integrations?.whatsappNotify },
@@ -275,6 +296,11 @@ export default function DashboardView() {
           />
           <h1>{t("dash_title")}</h1>
           <p className="svd-lede">{t("dash_lede")}</p>
+          <p className="svd-note">
+            {t("dash_city_scope")
+              .replace("{city}", `${city.name}, ${city.country}`)
+              .replace("{standard}", city.standards.source)}
+          </p>
         </div>
         <OperatorAuth />
       </header>
@@ -295,7 +321,7 @@ export default function DashboardView() {
         ))}
       </ul>
 
-      <section className="svd-card svd-queue">
+      <section className="svd-card svd-queue" id={COMMAND_CENTER_ID} tabIndex={-1}>
         <header className="svd-card-head svd-card-head-split">
           <div>
             <h2 className="vs-title">
@@ -383,7 +409,7 @@ export default function DashboardView() {
         <div className="svd-map">
           {/* Bare map only — the component's own header/sidebar belong to the
               standalone /map page and carry that page's styling. */}
-          <GoogleHotspotMap
+          <HotspotMap
             incidents={mapIncidents}
             fires={showFires ? fireFeed?.fires : undefined}
             mode="operations"
@@ -432,7 +458,7 @@ export default function DashboardView() {
               <Icon name="flame" size={17} />
               {t("dash_fires_title")}
             </h2>
-            <p>{t("dash_fires_detail")}</p>
+            <p>{t("dash_fires_detail_city").replace("{region}", city.fireRegion.label)}</p>
           </header>
           {!fireFeed ? (
             <p className="svd-empty">{t("drawer_loading")}</p>
@@ -446,9 +472,10 @@ export default function DashboardView() {
                 <span>{t("dash_fires_unit")}</span>
               </p>
               <p className="svd-note">
-                {t("dash_fires_window")
-                  .replace("{start}", new Date(fireFeed.windowStart).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }))
-                  .replace("{end}", new Date(fireFeed.windowEnd).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }))}
+                {t("dash_fires_window_tz")
+                  .replace("{start}", formatCityTime(city, fireFeed.windowStart))
+                  .replace("{end}", formatCityTime(city, fireFeed.windowEnd))
+                  .replace("{tz}", cityTimeZoneLabel(city))}
               </p>
             </>
           )}
@@ -488,7 +515,7 @@ export default function DashboardView() {
               <Icon name="station" size={17} />
               {t("dash_sensor")}
             </h2>
-            <p>{sensor?.stationName ? sensor.stationName : t("dash_sensor_detail")}</p>
+            <p>{sensor?.stationName ? sensor.stationName : t("dash_sensor_detail_generic")}</p>
           </header>
           <ul className="svd-readings">
             {[
@@ -508,7 +535,7 @@ export default function DashboardView() {
           </ul>
           <p className="svd-note">
             {sensorUpdatedMs !== null
-              ? `${t("dash_sensor_updated")} ${new Date(sensorUpdatedMs).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })}`
+              ? `${t("dash_sensor_updated")} ${formatCityTime(city, sensorUpdatedMs)} ${cityTimeZoneLabel(city)}`
               : sensor?.lastUpdated
                 ? `${t("dash_sensor_updated")} ${sensor.lastUpdated}`
                 : t("dash_sensor_none")}

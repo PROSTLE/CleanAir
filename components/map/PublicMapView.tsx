@@ -1,35 +1,42 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import GoogleHotspotMap, { type FireMarker } from "@/components/map/GoogleHotspotMap";
+import HotspotMap, { type FireMarker } from "@/components/map/HotspotMap";
+import { useCity } from "@/lib/cityContext";
 import { useT } from "@/lib/languageContext";
 
 /** Public hotspot map plus the NASA FIRMS regional fire layer. */
 export default function PublicMapView() {
   const t = useT();
-  const [fires, setFires] = useState<FireMarker[] | null>(null);
-  const [firesError, setFiresError] = useState(false);
+  const { city, ready } = useCity();
+  // Tagged with the city it was fetched for, so switching cities never shows stale fires.
+  const [feed, setFeed] = useState<{ cityId: string; fires: FireMarker[] | null; error: boolean } | null>(null);
   const [showFires, setShowFires] = useState(true);
 
   useEffect(() => {
+    if (!ready) return;
     let cancelled = false;
-    fetch("/api/fires")
+    fetch(`/api/fires?city=${city.id}`)
       .then(async (response) => {
         const data = (await response.json()) as { fires?: FireMarker[]; error?: string };
         if (cancelled) return;
-        if (!response.ok || data.error) setFiresError(true);
-        else setFires(data.fires ?? []);
+        const failed = !response.ok || Boolean(data.error);
+        setFeed({ cityId: city.id, fires: failed ? null : (data.fires ?? []), error: failed });
       })
       .catch(() => {
-        if (!cancelled) setFiresError(true);
+        if (!cancelled) setFeed({ cityId: city.id, fires: null, error: true });
       });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [city.id, ready]);
+
+  const current = feed?.cityId === city.id ? feed : null;
+  const fires = current?.fires ?? null;
+  const firesError = current?.error ?? false;
 
   return (
-    <GoogleHotspotMap
+    <HotspotMap
       enable3d
       fires={showFires && fires ? fires : undefined}
       headerControls={

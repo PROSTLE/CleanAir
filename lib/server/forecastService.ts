@@ -1,7 +1,7 @@
 import "server-only";
 
 import { cellToLatLng, isValidCell } from "h3-js";
-import { fetchNearbyStations } from "@/lib/cpcbSensor";
+import { getCity, resolveCityForPoint } from "@/lib/cities";
 import {
   backtestHeuristic,
   DELHI_H3_CELLS,
@@ -10,7 +10,8 @@ import {
   type ForecastResult,
   type SensorReading,
 } from "@/lib/forecastEngine";
-import { getWindData } from "@/lib/openWeather";
+import { fetchNearbyStations } from "@/lib/stations";
+import { getWindData } from "@/lib/weather";
 import {
   arimaForecast,
   isBigQueryConfigured,
@@ -32,6 +33,7 @@ export type ForecastServiceResult =
       forecast: ForecastResult;
       history: SensorReading[];
       source: "bigquery";
+      cityId: string;
       dataSource: "live" | "archive";
       station: string;
       isLiveHistory: boolean;
@@ -45,7 +47,9 @@ export type ForecastServiceResult =
 export function resolveForecastCell(h3CellId: string) {
   const known = DELHI_H3_CELLS.find((cell) => cell.h3CellId === h3CellId);
   const [centerLat, centerLng] = cellToLatLng(h3CellId);
+  const city = resolveCityForPoint(known?.lat ?? centerLat, known?.lng ?? centerLng) ?? getCity("delhi");
   return {
+    city,
     label: known?.label ?? `Cell ${h3CellId}`,
     bigQueryLabel: known?.bigQueryLabel ?? known?.label ?? `Cell ${h3CellId}`,
     lat: known?.lat ?? centerLat,
@@ -59,9 +63,9 @@ function ageHours(history: SensorReading[]) {
 }
 
 /**
- * Forecast for one H3 cell. Prefers the live CPCB table fed by
- * /api/cron/tick (nearest station within 5 km); falls back to the historical
- * archive and says so. Never synthesises data.
+ * Forecast for one H3 cell. Prefers the live station table fed by
+ * /api/cron/tick (nearest station within 5 km); for Delhi it falls back to
+ * the historical CPCB archive and says so. Never synthesises data.
  */
 export async function getForecastForCell(h3CellId: string): Promise<ForecastServiceResult> {
   if (!isValidCell(h3CellId)) {
@@ -75,12 +79,14 @@ export async function getForecastForCell(h3CellId: string): Promise<ForecastServ
   let history: SensorReading[] = [];
   let dataSource: "live" | "archive" = "archive";
   let station = cell.bigQueryLabel;
+  let nearestStationName: string | null = null;
   const errors: string[] = [];
 
-  // 1. Live: the nearest reporting CPCB station's recent hourly history.
+  // 1. Live: the nearest reporting station's recent hourly history.
   try {
     const nearest = (await fetchNearbyStations(cell.lat, cell.lng, 5)).find((candidate) => candidate.pm25 !== null);
     if (nearest) {
+      nearestStationName = nearest.stationName;
       const live = await queryLiveHistory(nearest.stationName, 72);
       const liveAge = ageHours(live);
       if (live.length >= MIN_LIVE_ROWS && liveAge !== null && liveAge <= LIVE_HISTORY_MAX_AGE_HOURS) {
@@ -93,8 +99,8 @@ export async function getForecastForCell(h3CellId: string): Promise<ForecastServ
     errors.push(`live: ${error instanceof Error ? error.message : String(error)}`);
   }
 
-  // 2. Archive fallback.
-  if (dataSource !== "live") {
+  // 2. Archive fallback (the archive table only holds Delhi's CPCB history).
+  if (dataSource !== "live" && cell.city.id === "delhi") {
     try {
       history = await queryArchiveHistory(h3CellId, cell.bigQueryLabel);
     } catch (error) {
@@ -109,7 +115,9 @@ export async function getForecastForCell(h3CellId: string): Promise<ForecastServ
       error:
         errors.length > 0
           ? `BigQuery query failed (${errors.join("; ")})`
-          : `Only ${history.length} PM2.5 readings found for ${cell.bigQueryLabel}; at least ${MIN_HISTORY_ROWS} are needed.`,
+          : cell.city.id === "delhi"
+            ? `Only ${history.length} PM2.5 readings found for ${cell.bigQueryLabel}; at least ${MIN_HISTORY_ROWS} are needed.`
+            : `No live PM2.5 history for ${nearestStationName ?? cell.label} yet. The scheduler stores ${cell.city.name} station readings in BigQuery every run; a forecast needs ${MIN_LIVE_ROWS} recent hourly readings from a station within 5 km.`,
       h3CellId,
     };
   }
@@ -132,7 +140,8 @@ export async function getForecastForCell(h3CellId: string): Promise<ForecastServ
     }
   }
 
-  const forecast = forecastPM25(history);
+  const engineOptions = { timeZone: cell.city.timeZone, profile: cell.city.forecastProfile };
+  const forecast = forecastPM25(history, engineOptions);
 
   // BigQuery ML only has a model for stations in the live table.
   let arima: { points: ArimaPoint[] } | { points: null; reason: string } = {
@@ -163,7 +172,8 @@ export async function getForecastForCell(h3CellId: string): Promise<ForecastServ
     isLiveHistory,
     historyAgeHours: historyAge === null ? null : Math.round(historyAge),
     windApplied,
-    backtest: backtestHeuristic(history),
+    backtest: backtestHeuristic(history, 12, engineOptions),
+    cityId: cell.city.id,
     arima,
   };
 }

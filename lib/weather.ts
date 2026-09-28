@@ -1,6 +1,8 @@
 import "server-only";
 
-const OPENWEATHER_ENDPOINT = "https://api.openweathermap.org/data/2.5/weather";
+// Open-Meteo: free, keyless weather API (non-commercial use).
+// https://open-meteo.com/en/docs
+const OPEN_METEO_ENDPOINT = "https://api.open-meteo.com/v1/forecast";
 const CACHE_TTL_MS = 10 * 60 * 1000;
 
 export type WindData = {
@@ -9,21 +11,19 @@ export type WindData = {
   windGustMs: number | null;
   temperatureC: number;
   humidityPct: number;
-  source: "OpenWeatherMap";
+  source: "Open-Meteo";
   fetchedAt: string;
 };
 
-type OpenWeatherResponse = {
-  wind?: {
-    speed?: number;
-    deg?: number;
-    gust?: number;
+type OpenMeteoResponse = {
+  current?: {
+    temperature_2m?: number;
+    relative_humidity_2m?: number;
+    wind_speed_10m?: number;
+    wind_direction_10m?: number;
+    wind_gusts_10m?: number;
   };
-  main?: {
-    temp?: number;
-    humidity?: number;
-  };
-  message?: string;
+  reason?: string;
 };
 
 type CacheEntry = {
@@ -32,27 +32,14 @@ type CacheEntry = {
 };
 
 const cache = new Map<string, CacheEntry>();
-let warnedAboutMissingKey = false;
 
 function getCacheKey(lat: number, lng: number) {
   return `${lat.toFixed(2)},${lng.toFixed(2)}`;
 }
 
-function getApiKey() {
-  const apiKey = process.env.OPENWEATHER_API_KEY?.trim();
-  if (apiKey) return apiKey;
-
-  if (!warnedAboutMissingKey) {
-    console.warn("OPENWEATHER_API_KEY is not set; wind data is unavailable.");
-    warnedAboutMissingKey = true;
-  }
-
-  return null;
-}
-
 function getFiniteNumber(value: unknown, label: string) {
   if (typeof value !== "number" || !Number.isFinite(value)) {
-    throw new Error(`OpenWeatherMap response is missing ${label}.`);
+    throw new Error(`Open-Meteo response is missing ${label}.`);
   }
 
   return value;
@@ -67,47 +54,49 @@ export function degreesToCompass(deg: number) {
   return directions[index];
 }
 
+/** Current wind (direction it blows FROM, meteorological degrees), temperature and humidity at a point. */
 export async function getWindData(lat: number, lng: number): Promise<WindData | null> {
   try {
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
       throw new Error("lat and lng must be valid numbers.");
     }
 
-    const apiKey = getApiKey();
-    if (!apiKey) return null;
-
     const cacheKey = getCacheKey(lat, lng);
     const cached = cache.get(cacheKey);
     if (cached && cached.expiresAt > Date.now()) return cached.value;
 
-    const url = new URL(OPENWEATHER_ENDPOINT);
-    url.searchParams.set("lat", String(lat));
-    url.searchParams.set("lon", String(lng));
-    url.searchParams.set("appid", apiKey);
-    url.searchParams.set("units", "metric");
+    const url = new URL(OPEN_METEO_ENDPOINT);
+    url.searchParams.set("latitude", String(lat));
+    url.searchParams.set("longitude", String(lng));
+    url.searchParams.set(
+      "current",
+      "temperature_2m,relative_humidity_2m,wind_speed_10m,wind_direction_10m,wind_gusts_10m",
+    );
+    url.searchParams.set("wind_speed_unit", "ms");
 
     const response = await fetch(url);
-    const payload = (await response.json()) as OpenWeatherResponse;
+    const payload = (await response.json()) as OpenMeteoResponse;
 
     if (!response.ok) {
       throw new Error(
-        payload.message
-          ? `OpenWeatherMap request failed (${response.status}): ${payload.message}`
-          : `OpenWeatherMap request failed (${response.status}).`,
+        payload.reason
+          ? `Open-Meteo request failed (${response.status}): ${payload.reason}`
+          : `Open-Meteo request failed (${response.status}).`,
       );
     }
 
+    const current = payload.current;
     const value: WindData = {
       fetchedAt: new Date().toISOString(),
-      humidityPct: getFiniteNumber(payload.main?.humidity, "main.humidity"),
-      source: "OpenWeatherMap",
-      temperatureC: getFiniteNumber(payload.main?.temp, "main.temp"),
-      windDegrees: getFiniteNumber(payload.wind?.deg, "wind.deg"),
+      humidityPct: getFiniteNumber(current?.relative_humidity_2m, "relative_humidity_2m"),
+      source: "Open-Meteo",
+      temperatureC: getFiniteNumber(current?.temperature_2m, "temperature_2m"),
+      windDegrees: getFiniteNumber(current?.wind_direction_10m, "wind_direction_10m"),
       windGustMs:
-        typeof payload.wind?.gust === "number" && Number.isFinite(payload.wind.gust)
-          ? payload.wind.gust
+        typeof current?.wind_gusts_10m === "number" && Number.isFinite(current.wind_gusts_10m)
+          ? current.wind_gusts_10m
           : null,
-      windSpeedMs: getFiniteNumber(payload.wind?.speed, "wind.speed"),
+      windSpeedMs: getFiniteNumber(current?.wind_speed_10m, "wind_speed_10m"),
     };
 
     cache.set(cacheKey, {
@@ -118,7 +107,7 @@ export async function getWindData(lat: number, lng: number): Promise<WindData | 
     return value;
   } catch (error) {
     console.warn(
-      "Could not fetch OpenWeatherMap wind data",
+      "Could not fetch Open-Meteo wind data",
       error instanceof Error ? error.message : error,
     );
     return null;

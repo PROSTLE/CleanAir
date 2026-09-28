@@ -29,6 +29,7 @@ yarn-error.log*
 # service account keys (Earth Engine, Translation) — never commit
 credentials/
 *-service-account*.json
+*-firebase-adminsdk-*.json
 
 # air quality data / python
 /ml/*.csv

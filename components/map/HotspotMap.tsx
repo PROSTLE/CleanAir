@@ -1,54 +1,29 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import dynamic from "next/dynamic";
 import { collection, limit, onSnapshot, orderBy, query } from "firebase/firestore";
 import { formatStatus } from "@/components/command/commandData";
 import { latLngToCell } from "h3-js";
-import { CITY_CENTER } from "@/lib/mapConstants";
+import { isInCity } from "@/lib/cities";
+import { useCity } from "@/lib/cityContext";
 import { db, isFirebaseConfigured } from "@/lib/firebase";
 import {
   hasPollutionSignal,
   reportToIncident,
   type FirestoreReport,
 } from "@/lib/firestoreReports";
-import {
-  loadGoogleMaps,
-  type GoogleMapCircle,
-  type GoogleMapInfoWindow,
-  type GoogleMapInstance,
-  type GoogleMapMarker,
-  type GoogleMapsApi,
-} from "@/lib/googleMaps";
 import type { Incident, PromotionTier, Severity } from "@/lib/types";
 import { useT } from "@/lib/languageContext";
-import DelhiIllustration from "@/components/shared/DelhiIllustration";
+import CityIllustration from "@/components/shared/CityIllustration";
 import Icon, { HAZARD_ICON } from "@/components/shared/Icon";
 import LiveIndicator from "@/components/shared/LiveIndicator";
-import type { Map3DPoint } from "@/components/map/Delhi3DMap";
+import type { FireMarker, MapPoint, MapSelection } from "@/components/map/HotspotMapCanvas";
 
-function Map3DLoading() {
-  const t = useT();
-  return (
-    <div className="google-map-state">
-      <strong>{t("map3d_loading_title")}</strong>
-      <span>{t("map3d_loading_desc")}</span>
-    </div>
-  );
-}
+export type { FireMarker };
 
-// MapLibre (~250 kB gzipped) is only downloaded the first time someone opens the 3D view.
-const Delhi3DMap = dynamic(() => import("@/components/map/Delhi3DMap"), {
-  ssr: false,
-  loading: Map3DLoading,
-});
-
-declare global {
-  interface Window {
-    google?: GoogleMapsApi;
-    cleanAirGoogleMapsPromises?: Partial<Record<string, Promise<void>>>;
-  }
-}
+// MapLibre (~275 kB gzipped) loads after the page shell, so it never blocks first paint.
+const HotspotMapCanvas = dynamic(() => import("@/components/map/HotspotMapCanvas"), { ssr: false });
 
 const severityColor: Record<Severity, string> = {
   critical: "#ef4444",
@@ -78,11 +53,8 @@ function getServerCompactMapViewportSnapshot() {
   return false;
 }
 
-/** NASA FIRMS active-fire pixel (from /api/fires). */
-export type FireMarker = { lat: number; lng: number; brightnessK: number | null };
-
-type GoogleHotspotMapProps = {
-  /** Offer a 2D / 3D switch over the map panel. */
+type HotspotMapProps = {
+  /** Offer a 2D / 3D switch plus stations, monitored areas and a legend (public map). */
   enable3d?: boolean;
   fires?: FireMarker[];
   /** Extra controls rendered in the public header's status card (e.g. layer toggles). */
@@ -94,32 +66,6 @@ type GoogleHotspotMapProps = {
   showHeader?: boolean;
   showSidebar?: boolean;
 };
-
-const mapStyles = [
-  {
-    featureType: "poi",
-    stylers: [{ visibility: "off" }],
-  },
-  {
-    featureType: "transit",
-    stylers: [{ visibility: "off" }],
-  },
-  {
-    featureType: "road",
-    elementType: "geometry",
-    stylers: [{ color: "#d8e1da" }],
-  },
-  {
-    featureType: "water",
-    elementType: "geometry",
-    stylers: [{ color: "#d9ece7" }],
-  },
-  {
-    featureType: "landscape",
-    elementType: "geometry",
-    stylers: [{ color: "#eef4f1" }],
-  },
-];
 
 interface MapCluster {
   id: string;
@@ -172,7 +118,7 @@ function getAmbientSourceLabel(source: string, t: (key: string) => string) {
   return key ? t(key) : source;
 }
 
-// Info window content is an HTML string. Location labels are citizen-typed
+// Pop-up content is an HTML string. Location labels are citizen-typed
 // text stored in Firestore, so they must be escaped before interpolation or
 // a crafted label runs script for every map viewer (including operators).
 function escapeHtml(value: string | undefined | null) {
@@ -192,25 +138,28 @@ const hazardColor: Record<string, string> = {
   particulate: "#eab308", // Amber — visually distinct from all 4 confirmed types
 };
 
-function markerIcon(cluster: MapCluster, mode: "public" | "operations") {
+// Pixels from the coordinate to the top of a pin, where its pop-up points.
+const PIN_POPUP_OFFSET = 44;
+
+function markerGraphic(cluster: MapCluster, mode: "public" | "operations") {
   const isPromoted = !!cluster.promotedIncident;
   const primaryIncident = cluster.promotedIncident ?? cluster.incidents[0];
   const isPending = primaryIncident.status === "pending" || primaryIncident.status === "classification_failed";
   const evidenceSummary = getEvidenceSourceSummary(primaryIncident);
-  
+
   if ((!isPromoted || isPending) && mode === "operations") {
     const hasMultiple = cluster.incidents.length > 1;
     const r = hasMultiple ? 14 : 8;
     const size = hasMultiple ? 28 : 16;
     return {
-      url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(`
+      anchor: "center" as const,
+      popupOffset: size / 2,
+      html: `
         <svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" fill="none" xmlns="http://www.w3.org/2000/svg">
           <circle cx="${size/2}" cy="${size/2}" r="${r - 1}" fill="#94a3b8" stroke="#475569" stroke-width="1.5" stroke-dasharray="2 2" fill-opacity="0.3"/>
           ${hasMultiple ? `<text x="${size/2}" y="${size/2 + 3.5}" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" font-weight="800" fill="#334155">${cluster.incidents.length}</text>` : `<circle cx="${size/2}" cy="${size/2}" r="3" fill="#64748b"/>`}
         </svg>
-      `)}`,
-      scaledSize: new window.google!.maps.Size(size, size),
-      anchor: new window.google!.maps.Point(size/2, size/2),
+      `,
     };
   }
 
@@ -230,19 +179,19 @@ function markerIcon(cluster: MapCluster, mode: "public" | "operations") {
   }
 
   return {
-    url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(`
+    anchor: "bottom" as const,
+    popupOffset: PIN_POPUP_OFFSET,
+    html: `
       <svg width="38" height="46" viewBox="0 0 38 46" fill="none" xmlns="http://www.w3.org/2000/svg">
         <path d="M19 45C19 45 35 29.8 35 17.8C35 8.5 27.8 1 19 1C10.2 1 3 8.5 3 17.8C3 29.8 19 45 19 45Z" fill="${color}" stroke="white" stroke-width="3" />
         <circle cx="19" cy="18" r="8" fill="white" fill-opacity="0.96"/>
         <text x="19" y="22" text-anchor="middle" font-family="Arial, sans-serif" font-size="14" font-weight="800" fill="${color}">${label}</text>
       </svg>
-    `)}`,
-    scaledSize: new window.google!.maps.Size(38, 46),
-    anchor: new window.google!.maps.Point(19, 45),
+    `,
   };
 }
 
-export default function GoogleHotspotMap({
+export default function HotspotMap({
   incidents: controlledIncidents,
   mode = "public",
   onIncidentSelect,
@@ -252,42 +201,33 @@ export default function GoogleHotspotMap({
   fires,
   headerControls,
   enable3d = false,
-}: GoogleHotspotMapProps = {}) {
+}: HotspotMapProps = {}) {
   const t = useT();
+  const { city, ready: cityReady } = useCity();
   const isCompactMapViewport = useSyncExternalStore(
     subscribeToCompactMapViewport,
     getCompactMapViewportSnapshot,
     getServerCompactMapViewportSnapshot,
   );
-  const mapNodeRef = useRef<HTMLDivElement | null>(null);
-  const mapRef = useRef<GoogleMapInstance | null>(null);
-  const markerRefs = useRef<Record<string, GoogleMapMarker>>({});
-  const circleRefs = useRef<GoogleMapCircle[]>([]);
-  const infoWindowRef = useRef<GoogleMapInfoWindow | null>(null);
-  const fireMarkerRefs = useRef<GoogleMapMarker[]>([]);
   const [liveReports, setLiveReports] = useState<Incident[]>([]);
   // "Live" is only claimed once Firestore has actually delivered a snapshot.
   const [feedState, setFeedState] = useState<"connecting" | "live" | "offline">(
     isFirebaseConfigured && db ? "connecting" : "offline",
   );
   const [selectedIdInternal, setSelectedIdInternal] = useState<string | null>(null);
-  const hasApiKey = Boolean(process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY);
-  const [status, setStatus] = useState<"idle" | "loading" | "ready" | "error">(
-    hasApiKey ? "loading" : "error",
-  );
-  const isControlled = controlledIncidents !== undefined;
+  const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [view, setView] = useState<"2d" | "3d">("2d");
-  // Keep the 3D map mounted after its first open so switching back is instant.
-  const [has3dOpened, setHas3dOpened] = useState(false);
+  const isControlled = controlledIncidents !== undefined;
 
   useEffect(() => {
     if (isControlled) return;
     if (!isFirebaseConfigured || !db) return;
 
+    // Fetched across all cities and filtered to the selected one below.
     const reportsQuery = query(
       collection(db, "reports"),
       orderBy("createdAt", "desc"),
-      limit(20),
+      limit(80),
     );
 
     return onSnapshot(
@@ -308,12 +248,17 @@ export default function GoogleHotspotMap({
     );
   }, [isControlled]);
 
+  const cityReports = useMemo(
+    () => liveReports.filter((report) => isInCity(city, report.latitude, report.longitude)).slice(0, 20),
+    [city, liveReports],
+  );
+
   const incidents = useMemo(
     () => {
       if (controlledIncidents) return controlledIncidents;
-      return liveReports;
+      return cityReports;
     },
-    [controlledIncidents, liveReports],
+    [controlledIncidents, cityReports],
   );
 
   const clusters = useMemo(() => {
@@ -374,22 +319,36 @@ export default function GoogleHotspotMap({
     return Array.from(groupMap.values());
   }, [incidents]);
 
-  const points3d = useMemo<Map3DPoint[]>(
+  const mapPoints = useMemo<MapPoint[]>(
     () =>
-      clusters.map((cluster) => {
+      clusters.map((cluster, clusterIndex) => {
         const primaryIncident = cluster.promotedIncident ?? cluster.incidents[0];
+        const isPending = primaryIncident.status === "pending" || primaryIncident.status === "classification_failed";
+        const isPromoted = !!cluster.promotedIncident;
+        const circleColor = mode === "public"
+          ? (hazardColor[primaryIncident.hazardType] ?? severityColor[primaryIncident.severity])
+          : (!isPromoted || isPending ? "#667085" : severityColor[primaryIncident.severity]);
+        const hasAlert = !!primaryIncident.evidence?.alertTier;
+        const graphic = markerGraphic(cluster, mode);
+
         return {
           id: primaryIncident.id,
           lat: cluster.latitude,
           lng: cluster.longitude,
-          label: primaryIncident.neighborhood,
-          detail: `${t("hazard_" + primaryIncident.hazardType) || primaryIncident.hazardType} · ${
-            primaryIncident.evidence?.alertTier ? t("map_alert_tier") : t("map_public_signal")
-          }`,
-          color: hazardColor[primaryIncident.hazardType] ?? severityColor[primaryIncident.severity],
+          title: `${primaryIncident.neighborhood} — ${primaryIncident.hazardType}`,
+          html: graphic.html,
+          anchor: graphic.anchor,
+          popupOffset: graphic.popupOffset,
+          zIndex: 10 + clusterIndex,
+          circle: {
+            radiusM: hasAlert ? severityRadius[primaryIncident.severity] : 450,
+            color: circleColor,
+            fillOpacity: hasAlert ? 0.16 : 0.06,
+            strokeOpacity: hasAlert ? 0.42 : 0.22,
+          },
         };
       }),
-    [clusters, t],
+    [clusters, mode],
   );
 
   const selectedId = controlledSelectedIncidentId ?? selectedIdInternal;
@@ -398,10 +357,10 @@ export default function GoogleHotspotMap({
     () => {
       const selected = incidents.find((incident) => incident.id === selectedId);
       if (isControlled) return selected ?? null;
-      const newestLiveIncident = isCompactMapViewport ? null : liveReports[0];
+      const newestLiveIncident = isCompactMapViewport ? null : cityReports[0];
       return selected ?? newestLiveIncident ?? null;
     },
-    [incidents, isCompactMapViewport, isControlled, liveReports, selectedId],
+    [incidents, isCompactMapViewport, isControlled, cityReports, selectedId],
   );
   const selectedIncidentId = selectedIncident?.id ?? null;
 
@@ -410,194 +369,18 @@ export default function GoogleHotspotMap({
     if (!isControlled) setSelectedIdInternal(incidentId);
   }, [isControlled, onIncidentSelect]);
 
-  useEffect(() => {
-    const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
-    if (!apiKey) {
-      return;
-    }
+  const selection = useMemo<MapSelection | null>(() => {
+    if (!selectedIncident) return null;
 
-    let cancelled = false;
-
-    loadGoogleMaps(apiKey)
-      .then(() => {
-        if (cancelled || !mapNodeRef.current) return;
-
-        const maps = window.google!.maps;
-        const map = new maps.Map(mapNodeRef.current, {
-          center: CITY_CENTER,
-          clickableIcons: false,
-          controlSize: 28,
-          disableDefaultUI: true,
-          fullscreenControl: mode === "public",
-          mapTypeControl: mode === "public" && !isCompactMapViewport,
-          mapTypeControlOptions: {
-            position: maps.ControlPosition.TOP_RIGHT,
-          },
-          streetViewControl: false,
-          styles: mapStyles,
-          zoom: 10,
-          zoomControl: true,
-          zoomControlOptions: {
-            position: maps.ControlPosition.RIGHT_BOTTOM,
-          },
-        });
-
-        mapRef.current = map;
-        infoWindowRef.current = new maps.InfoWindow({
-          maxWidth: isCompactMapViewport ? 248 : 360,
-        });
-        window.setTimeout(() => {
-          if (!cancelled) {
-            maps.event.trigger(map, "resize");
-            map.setCenter?.(CITY_CENTER);
-          }
-        }, 0);
-
-        setStatus("ready");
-      })
-      .catch(() => {
-        if (!cancelled) setStatus("error");
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [isCompactMapViewport, mode]);
-
-  useEffect(() => {
-    if (status !== "ready" || !mapNodeRef.current || !mapRef.current || !window.google?.maps) {
-      return;
-    }
-
-    const mapNode = mapNodeRef.current;
-    const map = mapRef.current;
-    const resizeMap = () => {
-      window.google?.maps.event.trigger(map, "resize");
-      if (selectedIncident) {
-        map.setCenter?.({
-          lat: selectedIncident.latitude,
-          lng: selectedIncident.longitude,
-        });
-      } else {
-        map.setCenter?.(CITY_CENTER);
-      }
-    };
-
-    resizeMap();
-    const observer = new ResizeObserver(resizeMap);
-    observer.observe(mapNode);
-    window.addEventListener("resize", resizeMap);
-
-    return () => {
-      observer.disconnect();
-      window.removeEventListener("resize", resizeMap);
-    };
-  }, [selectedIncident, status]);
-
-  useEffect(() => {
-    if (status !== "ready" || !mapRef.current || !window.google?.maps) return;
-
-    Object.values(markerRefs.current).forEach((marker) => marker.setMap(null));
-    circleRefs.current.forEach((circle) => circle.setMap(null));
-    markerRefs.current = {};
-    circleRefs.current = [];
-
-    const maps = window.google.maps;
-    clusters.forEach((cluster) => {
-      const primaryIncident = cluster.promotedIncident ?? cluster.incidents[0];
-      const position = { lat: cluster.latitude, lng: cluster.longitude };
-      
-      // Calculate display status for circles
-      const isPending = primaryIncident.status === "pending" || primaryIncident.status === "classification_failed";
-      const isPromoted = !!cluster.promotedIncident;
-      
-      const clusterIndex = clusters.indexOf(cluster);
-      const marker = new maps.Marker({
-        map: mapRef.current,
-        position,
-        title: `${primaryIncident.neighborhood} — ${primaryIncident.hazardType}`,
-        icon: markerIcon(cluster, mode),
-        zIndex: 10 + clusterIndex,
-      });
-
-      const circleColor = mode === "public"
-        ? (hazardColor[primaryIncident.hazardType] ?? severityColor[primaryIncident.severity])
-        : (!isPromoted || isPending ? "#667085" : severityColor[primaryIncident.severity]);
-
-      const circle = new maps.Circle({
-        center: position,
-        fillColor: circleColor,
-        fillOpacity: primaryIncident.evidence?.alertTier ? 0.16 : 0.06,
-        map: mapRef.current,
-        radius: primaryIncident.evidence?.alertTier ? severityRadius[primaryIncident.severity] : 450,
-        strokeColor: circleColor,
-        strokeOpacity: primaryIncident.evidence?.alertTier ? 0.42 : 0.22,
-        strokeWeight: 1,
-      });
-
-      marker.addListener("click", () => {
-        // If there's a promoted incident, select that. Otherwise just select the first one in the cluster.
-        selectIncident(primaryIncident.id);
-      });
-      
-      // Map all incidents in this cluster to the same marker so we can focus them when selected
-      cluster.incidents.forEach((incident) => {
-        markerRefs.current[incident.id] = marker;
-      });
-      circleRefs.current.push(circle);
-    });
-  }, [clusters, mode, selectIncident, status]);
-
-  // FIRMS fire layer: small non-interactive flame dots under the incident pins.
-  useEffect(() => {
-    fireMarkerRefs.current.forEach((marker) => marker.setMap(null));
-    fireMarkerRefs.current = [];
-    if (status !== "ready" || !mapRef.current || !window.google?.maps || !fires?.length) return;
-
-    const maps = window.google.maps;
-    const icon = {
-      url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(
-        '<svg width="12" height="12" viewBox="0 0 12 12" xmlns="http://www.w3.org/2000/svg"><circle cx="6" cy="6" r="4.5" fill="#e4572e" fill-opacity="0.85" stroke="#fff" stroke-width="1.5"/></svg>',
-      )}`,
-      scaledSize: new maps.Size(12, 12),
-      anchor: new maps.Point(6, 6),
-    };
-    fireMarkerRefs.current = fires.map(
-      (fire) =>
-        new maps.Marker({
-          map: mapRef.current,
-          position: { lat: fire.lat, lng: fire.lng },
-          icon,
-          clickable: false,
-          zIndex: 1,
-          title: fire.brightnessK ? `Active fire · ${Math.round(fire.brightnessK)} K` : "Active fire",
-        }),
-    );
-    return () => {
-      fireMarkerRefs.current.forEach((marker) => marker.setMap(null));
-      fireMarkerRefs.current = [];
-    };
-  }, [fires, status]);
-
-  useEffect(() => {
-    if (!selectedIncident || !mapRef.current || !window.google?.maps) return;
-
-    const marker = markerRefs.current[selectedIncident.id];
-    const position = {
-      lat: selectedIncident.latitude,
-      lng: selectedIncident.longitude,
-    };
-
-    mapRef.current.panTo(position);
-    marker?.setAnimation(window.google.maps.Animation.BOUNCE);
-    window.setTimeout(() => marker?.setAnimation(null), 700);
-
-    // Find which cluster this incident belongs to so we can display cluster counts in the info window
+    // Find which cluster this incident belongs to so we can display cluster counts in the pop-up
     const h3CellId = selectedIncident.h3CellId ?? latLngToCell(selectedIncident.latitude, selectedIncident.longitude, 8);
     const isAmbient = selectedIncident.source !== "citizen" && (selectedIncident.evidence?.citizenSignal?.reportCount ?? 0) === 0;
     const groupId = isAmbient ? h3CellId : `${h3CellId}-${selectedIncident.hazardType}`;
-    const cluster = clusters.find((c) => c.id === groupId);
-    
+    const cluster = clusters.find((c) => c.id === groupId || c.incidents.some((incident) => incident.id === selectedIncident.id));
+    // The pop-up points at the marker that represents this incident.
+    const point = mapPoints.find((candidate) => candidate.id === (cluster?.promotedIncident ?? cluster?.incidents[0])?.id);
+    if (!point) return null;
+
     const reportCount = cluster?.promotedIncident?.linkedReportIds?.length ?? cluster?.incidents.length ?? 1;
     const isPromoted = !!cluster?.promotedIncident;
     const evidenceSummary = getEvidenceSourceSummary(selectedIncident);
@@ -639,7 +422,7 @@ export default function GoogleHotspotMap({
         : t("map_evidence_sources").replace("{count}", evidenceSummary.count.toString());
 
       return `
-        <div class="google-map-infowindow ambient-infowindow">
+        <div class="hotspot-map-infowindow ambient-infowindow">
           <strong>${escapeHtml(headline)}</strong>
           ${pollutantLine ? `<span class="infowindow-pollutants">${pollutantLine}</span>` : ""}
           ${sourceLine ? `<span class="infowindow-sources">${sourceLine}</span>` : ""}
@@ -647,18 +430,18 @@ export default function GoogleHotspotMap({
         </div>
       `;
     }
-    
+
     let content = "";
     if (!isPromoted && mode === "operations") {
       content = `
-        <div class="google-map-infowindow unverified-tooltip" style="padding: 4px; text-align: center;">
+        <div class="hotspot-map-infowindow unverified-tooltip" style="padding: 4px; text-align: center;">
           <strong style="display: block; margin-bottom: 4px;">${escapeHtml(selectedIncident.neighborhood)}</strong>
           <span style="color: #64748b; font-size: 13px;">${reportCount === 1 ? t("map_citizen_report_single") : t("map_citizen_reports").replace("{count}", reportCount.toString())} · ${t("map_awaiting_corroboration")}</span>
         </div>
       `;
     } else if (!isPromoted && mode !== "operations") {
       content = `
-        <div class="google-map-infowindow" style="padding: 4px;">
+        <div class="hotspot-map-infowindow" style="padding: 4px;">
           <strong style="display: block; margin-bottom: 4px;">${escapeHtml(selectedIncident.neighborhood)}</strong>
           <span style="color: #64748b; font-size: 13px;">${t("hazard_" + selectedIncident.hazardType) || selectedIncident.hazardType} · ${reportCount} ${t("map_reported")}</span>
         </div>
@@ -668,7 +451,7 @@ export default function GoogleHotspotMap({
       content = buildAmbientInfoWindow(selectedIncident);
     } else {
       content = `
-        <div class="google-map-infowindow">
+        <div class="hotspot-map-infowindow">
           <strong>${escapeHtml(selectedIncident.neighborhood)}</strong>
           <span>${t("hazard_" + selectedIncident.hazardType) || selectedIncident.hazardType} · ${selectedIncident.aiConfidence}% ${t("map_confidence")}</span>
           ${reportCount > 1 ? `<span>${t("map_citizen_reports").replace("{count}", reportCount.toString())}</span>` : ""}
@@ -676,13 +459,9 @@ export default function GoogleHotspotMap({
         </div>
       `;
     }
-    
-    infoWindowRef.current?.setContent(content);
-    infoWindowRef.current?.open({
-      anchor: marker,
-      map: mapRef.current,
-    });
-  }, [clusters, mode, selectedIncident, t]);
+
+    return { id: point.id, lat: point.lat, lng: point.lng, html: content, popupOffset: point.popupOffset };
+  }, [clusters, mapPoints, mode, selectedIncident, t]);
 
   return (
     <section className={mode === "operations" ? "operations-map-layout" : "public-map-layout"}>
@@ -692,7 +471,7 @@ export default function GoogleHotspotMap({
             <p className="eyebrow">{t("map_eyebrow")}</p>
             <h1>{t("map_title")}</h1>
             <p>
-              {t("map_description")}
+              {t("map_description_city").replace("{city}", city.name)}
             </p>
           </div>
           <div className="map-status-card">
@@ -710,12 +489,27 @@ export default function GoogleHotspotMap({
             : "public-map-shell operations-map-shell"
         }
       >
-        <div className="google-map-panel">
-          <div className="google-map-canvas" ref={mapNodeRef} />
+        <div className="hotspot-map-panel">
+          <div className="hotspot-map-canvas">
+            {cityReady && (
+              <HotspotMapCanvas
+                key={city.id}
+                city={city}
+                points={mapPoints}
+                fires={fires}
+                selection={selection}
+                onSelect={selectIncident}
+                view={view}
+                showContext={enable3d}
+                popupMaxWidth={isCompactMapViewport ? 248 : 360}
+                onStatusChange={setStatus}
+              />
+            )}
+          </div>
           {status !== "ready" && (
-            <div className="google-map-state">
-              <DelhiIllustration
-                className="google-map-state-art"
+            <div className="hotspot-map-state">
+              <CityIllustration
+                className="hotspot-map-state-art"
                 points={incidents
                   .filter((incident) => Number.isFinite(incident.latitude) && Number.isFinite(incident.longitude))
                   .slice(0, 40)
@@ -725,29 +519,18 @@ export default function GoogleHotspotMap({
                 {status === "error" ? t("map_unavailable_title") : t("map_loading_title")}
               </strong>
               <span>
-                {status === "error" ? t("map_unavailable_desc") : t("map_loading_desc")}
+                {status === "error" ? t("map_unavailable_desc") : t("map_loading_desc_city").replace("{city}", city.name)}
               </span>
             </div>
           )}
-          {enable3d && has3dOpened && (
-            <Delhi3DMap
-              points={points3d}
-              selectedId={selectedId}
-              onSelect={selectIncident}
-              visible={view === "3d"}
-            />
-          )}
-          {enable3d && (
+          {enable3d && status === "ready" && (
             <div className="map-view-switch" role="group" aria-label={t("map3d_switch_label")}>
               {(["2d", "3d"] as const).map((option) => (
                 <button
                   key={option}
                   type="button"
                   aria-pressed={view === option}
-                  onClick={() => {
-                    setView(option);
-                    if (option === "3d") setHas3dOpened(true);
-                  }}
+                  onClick={() => setView(option)}
                 >
                   {t(option === "2d" ? "map3d_view_2d" : "map3d_view_3d")}
                 </button>
@@ -777,7 +560,7 @@ export default function GoogleHotspotMap({
             <div className="map-incident-list">
               {clusters.length === 0 ? (
                 <div className="vs-empty is-stacked map-feed-empty">
-                  <DelhiIllustration />
+                  <CityIllustration />
                   <div>
                     <strong>{t("map_feed_empty_title")}</strong>
                     <p>{t("map_feed_empty_desc")}</p>
@@ -787,7 +570,7 @@ export default function GoogleHotspotMap({
                 const primaryIncident = cluster.promotedIncident ?? cluster.incidents[0];
                 const reportCount = cluster.promotedIncident?.linkedReportIds?.length ?? cluster.incidents.length ?? 1;
                 const isSelected = cluster.incidents.some((incident) => incident.id === selectedIncidentId);
-                
+
                 return (
                   <button
                     className={

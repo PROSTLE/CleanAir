@@ -1,7 +1,3 @@
-// Default map center used before live incidents/reports load, or when the
-// map has nothing to auto-fit to. Not mock data — just Delhi's coordinates.
-export const CITY_CENTER = { lat: 28.6139, lng: 77.209 };
-
 // Known Delhi pollution-prone zones watched by the ambient scan
 // (lib/ambientScan.ts). These are area centroids, good to roughly 1 km —
 // the scale of an H3 res-8 cell — not the position of any single sensor.

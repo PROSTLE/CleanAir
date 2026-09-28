@@ -1,4 +1,4 @@
-// Recurring Delhi emission sources used for upwind attribution. Coordinates
+// Recurring emission sources used for upwind attribution. Coordinates
 // are the approximate area centroids already used elsewhere in this repo
 // (lib/ambientScan.ts MONITORED_CELLS, lib/forecastEngine.ts cells); they are
 // good to ~1 km, which is the scale attribution works at.
@@ -11,7 +11,7 @@ export type KnownSource = {
   lng: number;
 };
 
-export const KNOWN_SOURCES: KnownSource[] = [
+const DELHI_SOURCES: KnownSource[] = [
   { name: "Ghazipur Landfill", kind: "landfill", lat: 28.6264, lng: 77.3192 },
   { name: "Bhalswa Landfill", kind: "landfill", lat: 28.7427, lng: 77.1636 },
   { name: "Wazirpur Industrial Area", kind: "industrial_area", lat: 28.7041, lng: 77.1653 },
@@ -22,3 +22,14 @@ export const KNOWN_SOURCES: KnownSource[] = [
   { name: "Anand Vihar ISBT", kind: "traffic_hub", lat: 28.6469, lng: 77.3152 },
   { name: "ITO Crossing", kind: "traffic_hub", lat: 28.6292, lng: 77.241 },
 ];
+
+// Only Delhi has a curated list so far. Other capitals still get attribution
+// from live FIRMS fires and other open incidents; an empty list here means
+// "not curated yet", not "no sources".
+const KNOWN_SOURCES_BY_CITY: Record<string, KnownSource[]> = {
+  delhi: DELHI_SOURCES,
+};
+
+export function getKnownSources(cityId: string | null | undefined): KnownSource[] {
+  return (cityId && KNOWN_SOURCES_BY_CITY[cityId]) || [];
+}

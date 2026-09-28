@@ -1,12 +1,12 @@
 /**
- * Heuristic PM2.5 forecast engine for Delhi air quality.
+ * Heuristic PM2.5 forecast engine.
  *
  * No external ML API. Pure math running in <5ms per cell.
  *
  * Pipeline:
  *   1. Weighted Moving Average (WMA) over recent history → base trend
  *   2. Covariate adjustment (PM10, NO2 correlation)
- *   3. Diurnal pattern multipliers (Delhi-specific hourly profile)
+ *   3. Diurnal pattern multipliers (Delhi only: its measured hourly profile)
  *   4. Optional wind damping
  *   5. 24-hour hourly forecast array with confidence degradation
  */
@@ -21,6 +21,15 @@ const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
 
 export function getIstHour(date: Date): number {
   return new Date(date.getTime() + IST_OFFSET_MS).getUTCHours();
+}
+
+/** Hour of day (0-23) in any IANA time zone, independent of the server's zone. */
+export function getLocalHour(date: Date, timeZone: string): number {
+  if (timeZone === "Asia/Kolkata") return getIstHour(date);
+  const hour = Number(
+    new Intl.DateTimeFormat("en-US", { timeZone, hour: "numeric", hourCycle: "h23" }).format(date),
+  );
+  return Number.isFinite(hour) ? hour % 24 : date.getUTCHours();
 }
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -38,7 +47,7 @@ export interface SensorReading {
   sensor_co: number | null;
   sensor_nh3: number | null;
   sensor_ozone: number | null;
-  // Optional — wind data if enriched from openWeather
+  // Optional — wind data if enriched from Open-Meteo
   wind_speed_kmh?: number | null;
   wind_dir_deg?: number | null;
 }
@@ -167,8 +176,16 @@ function trendSlope(readings: number[]): number {
 
 export function forecastPM25(
   history: SensorReading[],
-  options: { anchor?: Date } = {},
+  options: {
+    anchor?: Date;
+    /** Time zone for hour labels (default IST). */
+    timeZone?: string;
+    /** "delhi" applies Delhi's diurnal profile and covariate backgrounds; "generic" uses neither. */
+    profile?: "delhi" | "generic";
+  } = {},
 ): ForecastResult {
+  const timeZone = options.timeZone ?? "Asia/Kolkata";
+  const useDelhiProfile = (options.profile ?? "delhi") === "delhi";
   // Sort oldest-first
   const sorted = [...history].sort(
     (a, b) => new Date(a.sampledAt).getTime() - new Date(b.sampledAt).getTime()
@@ -197,7 +214,8 @@ export function forecastPM25(
   // Use the most recent reading's covariate values
   const lastReading = sorted[sorted.length - 1];
   let covariateNudge = 0;
-  if (lastReading) {
+  // The PM10/NO2 backgrounds and slopes were fitted on Delhi data only.
+  if (lastReading && useDelhiProfile) {
     const pm10 = lastReading.sensor_pm10;
     const no2 = lastReading.sensor_no2;
     if (pm10 !== null && pm10 !== undefined && Number.isFinite(pm10)) {
@@ -228,7 +246,7 @@ export function forecastPM25(
 
   for (let h = 1; h <= 24; h++) {
     const forecastTime = new Date(now.getTime() + h * 60 * 60 * 1000);
-    const hour = getIstHour(forecastTime);
+    const hour = getLocalHour(forecastTime, timeZone);
     const hourLabel = `${String(hour).padStart(2, "0")}:00`;
 
     // Blend WMA with trend projection
@@ -244,7 +262,7 @@ export function forecastPM25(
     const adjustedValue = blendedBase + covariateNudge * covariateDecay;
 
     // Apply diurnal multiplier
-    const diurnalFactor = DIURNAL_MULTIPLIERS[hour];
+    const diurnalFactor = useDelhiProfile ? DIURNAL_MULTIPLIERS[hour] : 1;
     // The multiplier is applied to the delta above 30 µg/m³ baseline to avoid
     // distorting low-pollution forecasts inappropriately.
     const DIURNAL_BASELINE = 30;
@@ -254,8 +272,8 @@ export function forecastPM25(
     // Wind damping
     let predicted = isWindy ? diurnalAdjusted * WIND_DAMPING_FACTOR : diurnalAdjusted;
 
-    // Hard floor/ceiling: realistic Delhi range
-    predicted = Math.max(10, Math.min(500, Math.round(predicted)));
+    // Hard ceiling; the floor only applies to Delhi, where clean hours are rare.
+    predicted = Math.max(useDelhiProfile ? 10 : 0, Math.min(500, Math.round(predicted)));
 
     if (predicted > peakPm25) {
       peakPm25 = predicted;
@@ -289,7 +307,7 @@ export function forecastPM25(
   const summary = `PM2.5 expected to ${trendLabel === "rising" ? "rise to" : trendLabel === "falling" ? "fall to" : "remain near"} ${peakValue} µg/m³ by ${peakHour}. Currently ${trendNote}${covNote}.${windNote}`;
 
   const h3CellId = lastReading?.h3CellId ?? "unknown";
-  const location_label = lastReading?.location_label ?? "Delhi";
+  const location_label = lastReading?.location_label ?? "Unknown station";
 
   return {
     h3CellId,
@@ -418,7 +436,11 @@ export interface BacktestResult {
  * `holdoutHours` readings, compare against what was actually measured, and
  * report it next to a persistence baseline so the number means something.
  */
-export function backtestHeuristic(history: SensorReading[], holdoutHours = 12): BacktestResult | null {
+export function backtestHeuristic(
+  history: SensorReading[],
+  holdoutHours = 12,
+  options: { timeZone?: string; profile?: "delhi" | "generic" } = {},
+): BacktestResult | null {
   const sorted = [...history]
     .filter((reading) => reading.sensor_pm25 !== null && Number.isFinite(reading.sensor_pm25))
     .sort((a, b) => Date.parse(a.sampledAt) - Date.parse(b.sampledAt));
@@ -429,7 +451,7 @@ export function backtestHeuristic(history: SensorReading[], holdoutHours = 12): 
   const anchorMs = Date.parse(train[train.length - 1].sampledAt);
   if (!Number.isFinite(anchorMs)) return null;
 
-  const result = forecastPM25(train, { anchor: new Date(anchorMs) });
+  const result = forecastPM25(train, { ...options, anchor: new Date(anchorMs) });
   const persistenceValue = train[train.length - 1].sensor_pm25 as number;
   const heuristicErrors: number[] = [];
   const persistenceErrors: number[] = [];

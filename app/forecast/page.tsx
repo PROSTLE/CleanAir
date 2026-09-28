@@ -1,19 +1,23 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
+import { latLngToCell } from "h3-js";
 import Navbar from "@/components/shared/Navbar";
 import ForecastChart from "@/components/forecast/ForecastChart";
 import AQIBadge from "@/components/forecast/AQIBadge";
-import DelhiIllustration from "@/components/shared/DelhiIllustration";
+import CityIllustration from "@/components/shared/CityIllustration";
 import Icon, { type IconName } from "@/components/shared/Icon";
 import LiveIndicator, { type LiveState } from "@/components/shared/LiveIndicator";
 import {
   DELHI_H3_CELLS,
   getAQIInfo,
+  type ForecastCell,
   type ForecastResult,
   type HourlyForecastPoint,
   type SensorReading,
 } from "@/lib/forecastEngine";
+import { cityTimeZoneLabel, formatCityTime, type CityConfig } from "@/lib/cities";
+import { useCity } from "@/lib/cityContext";
 import { useT } from "@/lib/languageContext";
 
 type ForecastApiResponse = ForecastResult & {
@@ -35,7 +39,13 @@ type ForecastMeta = Pick<
 >;
 
 type GoogleAq = {
-  current: { indiaAqi: number | null; indiaCategory: string | null; pm25: number | null; time: string | null };
+  current: {
+    localAqi: number | null;
+    localCategory: string | null;
+    localIndexName: string | null;
+    pm25: number | null;
+    time: string | null;
+  };
   forecast: Array<{ time: string | null; pm25: number | null }>;
 };
 
@@ -52,7 +62,26 @@ function shortStation(label?: string) {
   return label?.replace(/, Delhi - (DPCC|CPCB|IMD)$/, "") ?? "";
 }
 
-function buildSummary(forecast: ForecastResult, t: Translator) {
+type StationZones = { cityId: string; cells: ForecastCell[]; error: string | null };
+
+// Delhi has curated zones backed by a CPCB archive; every other city
+// forecasts at its live monitoring stations (H3 res-8 cell of each station).
+function stationsToCells(stations: Array<{ name: string; lat: number; lng: number; pm25: number | null }>): ForecastCell[] {
+  return stations
+    .filter((station) => station.pm25 !== null)
+    .map((station) => ({
+      h3CellId: latLngToCell(station.lat, station.lng, 8),
+      label: station.name,
+      labelKey: "",
+      lat: station.lat,
+      lng: station.lng,
+      bigQueryLabel: station.name,
+    }))
+    .filter((cell, index, cells) => cells.findIndex((other) => other.h3CellId === cell.h3CellId) === index)
+    .slice(0, 12);
+}
+
+function buildSummary(forecast: ForecastResult, t: Translator, city: CityConfig) {
   const slope = Math.abs(forecast.trendMagnitude).toFixed(1);
   const trendNote =
     forecast.trend === "rising"
@@ -63,7 +92,8 @@ function buildSummary(forecast: ForecastResult, t: Translator) {
   // The peak is the 24-hour maximum, which can sit above the current value
   // even while the short-term trend falls (e.g. the evening build-up). So the
   // sentence states the peak and the current trend separately.
-  return t("fc_summary")
+  return t("fc_summary_tz")
+    .replace("{tz}", cityTimeZoneLabel(city))
     .replace("{peakValue}", Math.round(forecast.peakPm25).toString())
     .replace("{peakHour}", forecast.peakHour)
     .replace("{trendNote}", trendNote)
@@ -101,20 +131,67 @@ function HourRow({ point, t }: { point: HourlyForecastPoint; t: Translator }) {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 export default function ForecastPage() {
   const t = useT();
-  const [selectedCell, setSelectedCell] = useState(DELHI_H3_CELLS[0].h3CellId);
+  const { city, ready: cityReady } = useCity();
+  const [stationZones, setStationZones] = useState<StationZones | null>(null);
+  const cells = useMemo(
+    () =>
+      !cityReady
+        ? []
+        : city.id === "delhi"
+          ? DELHI_H3_CELLS
+          : stationZones?.cityId === city.id
+            ? stationZones.cells
+            : [],
+    [city.id, cityReady, stationZones],
+  );
+  const zonesError = city.id !== "delhi" && stationZones?.cityId === city.id ? stationZones.error : null;
+  const zonesLoading = city.id !== "delhi" && stationZones?.cityId !== city.id;
+  const [pickedCell, setSelectedCell] = useState<string | null>(null);
+  // A pick from another city falls back to this city's first zone.
+  const selectedCell = cells.find((cell) => cell.h3CellId === pickedCell)?.h3CellId ?? cells[0]?.h3CellId ?? null;
   const [loading, setLoading] = useState(false);
-  const [forecast, setForecast] = useState<ForecastResult | null>(null);
-  const [history, setHistory] = useState<SensorReading[]>([]);
-  const [meta, setMeta] = useState<ForecastMeta | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [googleAq, setGoogleAq] = useState<GoogleAq | null>(null);
-  const [googleAqError, setGoogleAqError] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState<{
+    cellId: string;
+    forecast: ForecastResult | null;
+    history: SensorReading[];
+    meta: ForecastMeta | null;
+    error: string | null;
+  } | null>(null);
+  const [googleAqState, setGoogleAqState] = useState<{ cellId: string; data: GoogleAq | null; error: string | null } | null>(
+    null,
+  );
 
-  const selected = DELHI_H3_CELLS.find((cell) => cell.h3CellId === selectedCell) ?? DELHI_H3_CELLS[0];
+  const selected = cells.find((cell) => cell.h3CellId === selectedCell) ?? null;
+
+  useEffect(() => {
+    if (!cityReady || city.id === "delhi") return;
+    let cancelled = false;
+    fetch(`/api/stations?city=${city.id}`)
+      .then(async (response) => {
+        const data = (await response.json().catch(() => null)) as
+          | { stations?: Array<{ name: string; lat: number; lng: number; pm25: number | null }>; error?: string }
+          | null;
+        if (cancelled) return;
+        const zones = stationsToCells(data?.stations ?? []);
+        setStationZones({
+          cityId: city.id,
+          cells: zones,
+          error: zones.length ? null : (data?.error ?? t("fc_no_station_zones").replace("{city}", city.name)),
+        });
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setStationZones({ cityId: city.id, cells: [], error: error instanceof Error ? error.message : String(error) });
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [city.id, city.name, cityReady, t]);
 
   // Independent cross-check: Google's modelled PM2.5 for the same point.
   useEffect(() => {
-    const cell = DELHI_H3_CELLS.find((candidate) => candidate.h3CellId === selectedCell);
+    const cell = cells.find((candidate) => candidate.h3CellId === selectedCell);
     if (!cell) return;
     let cancelled = false;
     fetch(`/api/air-quality?lat=${cell.lat}&lng=${cell.lng}`)
@@ -122,20 +199,24 @@ export default function ForecastPage() {
         const data = (await response.json().catch(() => null)) as (GoogleAq & { error?: string }) | null;
         if (cancelled) return;
         if (!response.ok || !data || data.error) {
-          setGoogleAq(null);
-          setGoogleAqError(data?.error ?? `Air Quality API responded ${response.status}`);
+          setGoogleAqState({
+            cellId: cell.h3CellId,
+            data: null,
+            error: data?.error ?? `Air Quality API responded ${response.status}`,
+          });
         } else {
-          setGoogleAq(data);
-          setGoogleAqError(null);
+          setGoogleAqState({ cellId: cell.h3CellId, data, error: null });
         }
       })
       .catch((error) => {
-        if (!cancelled) setGoogleAqError(error instanceof Error ? error.message : String(error));
+        if (!cancelled) {
+          setGoogleAqState({ cellId: cell.h3CellId, data: null, error: error instanceof Error ? error.message : String(error) });
+        }
       });
     return () => {
       cancelled = true;
     };
-  }, [selectedCell]);
+  }, [cells, selectedCell]);
 
   const loadForecast = useCallback(async (h3CellId: string) => {
     setLoading(true);
@@ -162,23 +243,30 @@ export default function ForecastPage() {
       void _source;
       void _error;
 
-      setForecast(forecastResult);
-      setHistory(apiHistory ?? []);
-      setMeta({ station, isLiveHistory, historyAgeHours, windApplied, dataSource, backtest, arima });
-      setLoadError(null);
+      setLoaded({
+        cellId: h3CellId,
+        forecast: forecastResult,
+        history: apiHistory ?? [],
+        meta: { station, isLiveHistory, historyAgeHours, windApplied, dataSource, backtest, arima },
+        error: null,
+      });
     } catch (err) {
       // No client-side synthetic fallback: show why the forecast is missing.
       console.warn("Forecast unavailable:", err);
-      setForecast(null);
-      setHistory([]);
-      setMeta(null);
-      setLoadError(err instanceof Error ? err.message : "Forecast unavailable.");
+      setLoaded({
+        cellId: h3CellId,
+        forecast: null,
+        history: [],
+        meta: null,
+        error: err instanceof Error ? err.message : "Forecast unavailable.",
+      });
     } finally {
       setLoading(false);
     }
   }, []);
 
   useEffect(() => {
+    if (!selectedCell) return;
     const timeoutId = window.setTimeout(() => {
       void loadForecast(selectedCell);
     }, 0);
@@ -186,20 +274,27 @@ export default function ForecastPage() {
   }, [selectedCell, loadForecast]);
 
   useEffect(() => {
+    if (!selectedCell) return;
     const intervalId = window.setInterval(() => {
       void loadForecast(selectedCell);
     }, FORECAST_REFRESH_MS);
     return () => window.clearInterval(intervalId);
   }, [selectedCell, loadForecast]);
 
+  // Only what was loaded for the zone on screen; a switch never shows stale data.
+  const current = loaded && loaded.cellId === selectedCell ? loaded : null;
+  const forecast = current?.forecast ?? null;
+  const history = current?.history ?? [];
+  const meta = current?.meta ?? null;
+  const loadError = current?.error ?? null;
+  const googleAqCurrent = googleAqState?.cellId === selectedCell ? googleAqState : null;
+  const googleAq = googleAqCurrent?.data ?? null;
+  const googleAqError = googleAqCurrent?.error ?? null;
   const currentAQI = forecast ? getAQIInfo(forecast.currentPm25) : null;
   const peakAQI = forecast ? getAQIInfo(forecast.peakPm25) : null;
+  const tzLabel = cityTimeZoneLabel(city);
   const historyEndLabel = forecast?.historyEnd
-    ? new Date(forecast.historyEnd).toLocaleString("en-IN", {
-        timeZone: "Asia/Kolkata",
-        dateStyle: "medium",
-        timeStyle: "short",
-      })
+    ? `${formatCityTime(city, forecast.historyEnd)} ${tzLabel}`
     : null;
 
   const liveState: LiveState =
@@ -229,11 +324,13 @@ export default function ForecastPage() {
             <div>
               <LiveIndicator state={liveState} label={`${t("fc_kicker")} · ${liveLabel}`} />
               <h1>{t("forecast_title")}</h1>
-              <p className="svd-lede">{t("fc_lede")}</p>
+              <p className="svd-lede">
+                {t("fc_lede_city").replace("{city}", city.name).replace("{network}", city.stations.network)}
+              </p>
               <ul className="vs-meta fc-provenance">
                 <li>
                   <Icon name="database" size={15} />
-                  {t("fc_meta_source")}
+                  {t("fc_meta_source_generic")}
                 </li>
                 <li>
                   <Icon name="hexagon" size={15} />
@@ -248,8 +345,8 @@ export default function ForecastPage() {
             <button
               type="button"
               className="svd-btn"
-              onClick={() => void loadForecast(selectedCell)}
-              disabled={loading}
+              onClick={() => selectedCell && void loadForecast(selectedCell)}
+              disabled={loading || !selectedCell}
             >
               <Icon name="refresh" size={15} className={loading ? "vs-spin" : ""} />
               {loading ? t("fc_refreshing") : t("fc_refresh")}
@@ -258,7 +355,7 @@ export default function ForecastPage() {
 
           {/* ── Zones ────────────────────────────────────────────────────── */}
           <nav className="fc-zones" aria-label={t("forecast_select_cell_title")}>
-            {DELHI_H3_CELLS.map((cell) => {
+            {cells.map((cell) => {
               const isSelected = selectedCell === cell.h3CellId;
               return (
                 <button
@@ -278,6 +375,25 @@ export default function ForecastPage() {
             })}
           </nav>
 
+          {zonesLoading && (
+            <p className="fc-status">
+              <Icon name="refresh" size={15} className="vs-spin" />
+              {t("fc_loading_zones").replace("{city}", city.name)}
+            </p>
+          )}
+
+          {zonesError && (
+            <section className="svd-card fc-card">
+              <div className="vs-empty">
+                <CityIllustration />
+                <div>
+                  <strong>{t("fc_unavailable_title")}</strong>
+                  <p>{zonesError}</p>
+                </div>
+              </div>
+            </section>
+          )}
+
           {loading && !forecast && !loadError && (
             <p className="fc-status">
               <Icon name="refresh" size={15} className="vs-spin" />
@@ -285,10 +401,10 @@ export default function ForecastPage() {
             </p>
           )}
 
-          {!loading && loadError && (
+          {!loading && loadError && selected && (
             <section className="svd-card fc-card">
               <div className="vs-empty">
-                <DelhiIllustration points={[{ lat: selected.lat, lng: selected.lng, tone: "calm" }]} />
+                <CityIllustration points={[{ lat: selected.lat, lng: selected.lng, tone: "calm" }]} />
                 <div>
                   <strong>{t("fc_unavailable_title")}</strong>
                   <p>{loadError}</p>
@@ -314,7 +430,7 @@ export default function ForecastPage() {
             </p>
           )}
 
-          {forecast && currentAQI && peakAQI && (
+          {forecast && selected && currentAQI && peakAQI && (
             <>
               {/* ── Now vs peak ────────────────────────────────────────── */}
               <section className="fc-hero">
@@ -332,11 +448,11 @@ export default function ForecastPage() {
                   <p className="fc-label">{t("fc_peak")}</p>
                   <p className="fc-reading">
                     {forecast.peakPm25}
-                    <small>{t("fc_peak_at").replace("{hour}", forecast.peakHour)}</small>
+                    <small>{t("fc_peak_at_tz").replace("{hour}", forecast.peakHour).replace("{tz}", tzLabel)}</small>
                   </p>
                   <AQIBadge pm25={forecast.peakPm25} aqi={peakAQI} showValue={false} />
                 </div>
-                <p className="fc-summary">{buildSummary(forecast, t)}</p>
+                <p className="fc-summary">{buildSummary(forecast, t, city)}</p>
               </section>
 
               <ul className="svd-kpis fc-kpis">
@@ -362,7 +478,7 @@ export default function ForecastPage() {
                     {forecast.covariateNudge.toFixed(1)}
                   </strong>
                   <span>{t("forecast_metric_covariate")}</span>
-                  <small>{t("fc_covariate_detail")}</small>
+                  <small>{city.forecastProfile === "delhi" ? t("fc_covariate_detail") : t("fc_covariate_off")}</small>
                 </li>
                 <li className="svd-kpi">
                   <strong>{history.length}</strong>
@@ -371,14 +487,14 @@ export default function ForecastPage() {
                 </li>
                 <li className="svd-kpi">
                   <strong>
-                    {new Date(forecast.generatedAt).toLocaleTimeString("en-IN", {
-                      timeZone: "Asia/Kolkata",
+                    {new Date(forecast.generatedAt).toLocaleTimeString("en-GB", {
+                      timeZone: city.timeZone,
                       hour: "2-digit",
                       minute: "2-digit",
                     })}
                   </strong>
                   <span>{t("forecast_metric_generated")}</span>
-                  <small>{t("fc_generated_detail")}</small>
+                  <small>{t("fc_generated_detail_tz").replace("{tz}", tzLabel)}</small>
                 </li>
               </ul>
 
@@ -389,7 +505,7 @@ export default function ForecastPage() {
                     <Icon name="chart" size={18} />
                     {t("forecast_chart_title")}
                   </h2>
-                  <p>{t("forecast_chart_subtitle")}</p>
+                  <p>{t("forecast_chart_subtitle_tz").replace("{tz}", tzLabel)}</p>
                 </header>
                 <ForecastChart
                   forecast={forecast}
@@ -455,15 +571,16 @@ export default function ForecastPage() {
                     </strong>
                     <p>
                       {googleAq
-                        ? t("forecast_model_google_sub")
-                            .replace("{aqi}", String(googleAq.current.indiaAqi ?? "—"))
-                            .replace("{category}", googleAq.current.indiaCategory ?? "")
+                        ? t("forecast_model_google_sub_local")
+                            .replace("{index}", googleAq.current.localIndexName ?? t("drawer_gaq_local"))
+                            .replace("{aqi}", String(googleAq.current.localAqi ?? "—"))
+                            .replace("{category}", googleAq.current.localCategory ?? "")
                         : (googleAqError ?? t("drawer_loading"))}
                     </p>
                   </li>
                   <li>
                     <span className="fc-model-name">{t("forecast_model_source")}</span>
-                    <strong>{meta?.dataSource === "live" ? t("forecast_source_live") : t("forecast_source_archive")}</strong>
+                    <strong>{meta?.dataSource === "live" ? t("forecast_source_live_generic") : t("forecast_source_archive")}</strong>
                     <p>{meta?.station ? `${t("forecast_station")}: ${meta.station}` : "—"}</p>
                   </li>
                 </ul>
@@ -477,7 +594,7 @@ export default function ForecastPage() {
                       <Icon name="clock" size={18} />
                       {t("fc_hours_title")}
                     </h2>
-                    <p>{t("fc_hours_sub")}</p>
+                    <p>{t("fc_hours_sub_tz").replace("{tz}", tzLabel)}</p>
                   </div>
                   <span className="fc-confidence-key">
                     <span className="fc-confidence" aria-hidden="true">

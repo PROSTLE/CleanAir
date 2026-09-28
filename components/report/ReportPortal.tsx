@@ -6,6 +6,8 @@ import Link from "next/link";
 import { defaultLocation, hazardTags } from "@/components/report/reportData";
 import ReportLocationPicker from "@/components/report/ReportLocationPicker";
 import Navbar from "@/components/shared/Navbar";
+import { findCity } from "@/lib/cities";
+import { useCity } from "@/lib/cityContext";
 import { db, isFirebaseConfigured } from "@/lib/firebase";
 import { hasPollutionSignal, type FirestoreReport } from "@/lib/firestoreReports";
 import { readPhotoMeta, type PhotoMeta } from "@/lib/exif";
@@ -14,6 +16,7 @@ import { submitCitizenReport } from "@/lib/reportSubmissions";
 import { useLanguage, useT } from "@/lib/languageContext";
 
 // Google Cloud Speech-to-Text language codes, keyed by our locale codes.
+// Used in Delhi; other cities transcribe in their own language (lib/cities.ts).
 const SPEECH_LOCALE_MAP: Record<string, string> = {
   as: "as-IN",
   bn: "bn-IN",
@@ -167,6 +170,7 @@ function StepIcon({ step }: { step: number }) {
 export default function ReportPortal() {
   const t = useT();
   const { locale } = useLanguage();
+  const { city } = useCity();
   const [selectedTag, setSelectedTag] = useState(hazardTags[0].id);
   const [anonymous, setAnonymous] = useState(true);
   const [location, setLocation] = useState(defaultLocation);
@@ -185,6 +189,7 @@ export default function ReportPortal() {
   const [voiceError, setVoiceError] = useState("");
   const [photoMeta, setPhotoMeta] = useState<PhotoMeta | null>(null);
   const [inPilotArea, setInPilotArea] = useState(true);
+  const [filedCityId, setFiledCityId] = useState<string | null>(null);
   const myReports = useMyReports();
   const recordingCleanupRef = useRef<(() => void) | null>(null);
 
@@ -357,7 +362,8 @@ export default function ReportPortal() {
         setIsTranscribing(true);
         try {
           const blob = new Blob(chunks, { type: "audio/webm;codecs=opus" });
-          const languageCode = SPEECH_LOCALE_MAP[locale] ?? "en-IN";
+          const languageCode =
+            city.countryCode === "in" ? (SPEECH_LOCALE_MAP[locale] ?? "en-IN") : city.speechLanguage;
           const transcript = await transcribeAudio(blob, languageCode, recordedSampleRate);
           setNote((prev) => (prev ? `${prev} ${transcript}` : transcript));
         } catch (error) {
@@ -422,6 +428,7 @@ export default function ReportPortal() {
       setSubmissionId(submission.id);
       setStoredInFirebase(submission.stored);
       setInPilotArea(submission.inPilotArea);
+      setFiledCityId(submission.cityId);
       saveMyReport({ id: submission.id, label: location.label, createdAt: new Date().toISOString() });
       if (submission.stored) {
         setClassificationFeedback({
@@ -547,6 +554,9 @@ export default function ReportPortal() {
                 <span className="rp-section-number">03</span>
                 Location
               </label>
+              <small className="rp-location-scope">
+                {t("report_location_scope").replace("{city}", `${city.name}, ${city.country}`)}
+              </small>
               <ReportLocationPicker value={location} onChange={setLocation} />
             </div>
 
@@ -680,7 +690,12 @@ export default function ReportPortal() {
                 </p>
                 {submissionId && <small className="rp-result-id">ID: {submissionId}</small>}
                 {!inPilotArea && (
-                  <small className="classification-feedback neutral">{t("report_outside_pilot")}</small>
+                  <small className="classification-feedback neutral">{t("report_outside_monitored")}</small>
+                )}
+                {inPilotArea && filedCityId && filedCityId !== city.id && (
+                  <small className="classification-feedback neutral">
+                    {t("report_filed_other_city").replace("{city}", findCity(filedCityId)?.name ?? filedCityId)}
+                  </small>
                 )}
                 {classificationFeedback && (
                   <small className={`classification-feedback ${classificationFeedback.tone}`}>

@@ -1,5 +1,6 @@
 import "server-only";
 import dns from "node:dns";
+import type { StationReading } from "@/lib/stations";
 
 dns.setDefaultResultOrder("ipv4first");
 
@@ -9,23 +10,9 @@ const PUBLIC_SAMPLE_KEY = "579b464db66ec23bdd000001";
 const CACHE_TTL_MS = 15 * 60 * 1000;
 const PAGE_LIMIT = 1000;
 const REQUEST_ATTEMPTS = 3;
+const REQUEST_TIMEOUT_MS = 12_000;
 const RETRY_DELAY_MS = 500;
 const NCR_STATES = ["Delhi", "Haryana", "Uttar Pradesh", "Rajasthan"];
-// CPCB India national 24h ambient air quality standards (µg/m³).
-// These are used for *event-detection* delta calculations — i.e. deciding
-// whether a sensor reading is anomalously high enough to confirm a citizen
-// report. WHO guidelines (PM2.5=15, PM10=45, NO2=25, SO2=40) are the right
-// standard for health-risk display, but Delhi's ambient baseline already
-// exceeds them every single day, so using WHO as the reference meant sensor
-// support triggered on 100% of reports regardless of whether a real event
-// occurred. CPCB values reflect what India's own pollution board considers
-// the 24h limit — a reading must exceed THESE by ≥50% to count as a sensor
-// confirmation of a citizen-reported incident.
-// (WHO values are still used in the health-risk badge layer, not here.)
-const CPCB_PM25_REFERENCE = 60;
-const CPCB_PM10_REFERENCE = 100;
-const CPCB_NO2_REFERENCE = 80;
-const CPCB_SO2_REFERENCE = 80;
 
 type CpcbApiResponse = {
   records?: CpcbRecord[];
@@ -63,26 +50,6 @@ type GroupedStation = {
   lastUpdated: string | null;
 };
 
-type StationWithDistance = GroupedStation & {
-  distanceKm: number;
-};
-
-export type NearbyStationReading = {
-  stationName: string;
-  lat: number;
-  lng: number;
-  distanceKm: number;
-  pm25: number | null;
-  pm10: number | null;
-  no2: number | null;
-  so2: number | null;
-  co: number | null;
-  nh3: number | null;
-  ozone: number | null;
-  lastUpdated: string | null;
-  source: "CPCB";
-};
-
 let cachedStations:
   | {
       expiresAt: number;
@@ -90,6 +57,10 @@ let cachedStations:
     }
   | null = null;
 let warnedAboutSampleKey = false;
+// While data.gov.in is down, answer "no stations" fast instead of retrying
+// the whole ~40 s fetch on every request.
+const FAILURE_BACKOFF_MS = 2 * 60 * 1000;
+let failedUntil = 0;
 
 function getApiKey() {
   const configuredKey = process.env.CPCB_API_KEY?.trim();
@@ -156,37 +127,6 @@ function createStation(record: CpcbRecord, lat: number, lng: number): GroupedSta
   };
 }
 
-function hasUsablePollutantData(station: NearbyStationReading | StationWithDistance) {
-  return [
-    station.pm25,
-    station.pm10,
-    station.no2,
-    station.so2,
-    station.co,
-    station.nh3,
-    station.ozone,
-  ].some((value) => value !== null);
-}
-
-function haversineKm(
-  originLat: number,
-  originLng: number,
-  destinationLat: number,
-  destinationLng: number,
-) {
-  const earthRadiusKm = 6371;
-  const toRadians = (degrees: number) => (degrees * Math.PI) / 180;
-  const latDelta = toRadians(destinationLat - originLat);
-  const lngDelta = toRadians(destinationLng - originLng);
-  const lat1 = toRadians(originLat);
-  const lat2 = toRadians(destinationLat);
-  const a =
-    Math.sin(latDelta / 2) ** 2 +
-    Math.cos(lat1) * Math.cos(lat2) * Math.sin(lngDelta / 2) ** 2;
-
-  return earthRadiusKm * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
-
 function sleep(ms: number) {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
@@ -196,7 +136,9 @@ function sleep(ms: number) {
 async function fetchCpcbPage(url: URL) {
   for (let attempt = 1; attempt <= REQUEST_ATTEMPTS; attempt += 1) {
     try {
-      const response = await fetch(url);
+      // data.gov.in sometimes hangs rather than failing; without a timeout
+      // one stuck request stalls every Delhi lookup, scan and cron run.
+      const response = await fetch(url, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
       if (!response.ok) {
         throw new Error(`CPCB request failed (${response.status}).`);
       }
@@ -247,6 +189,7 @@ async function fetchAllStations() {
 
   const apiKey = getApiKey();
   if (!apiKey) return [];
+  if (Date.now() < failedUntil) throw new Error("CPCB feed unavailable (retrying shortly).");
 
   const stateResults = await Promise.allSettled(
     NCR_STATES.map((state) => fetchStateRecords(apiKey, state)),
@@ -260,6 +203,11 @@ async function fetchAllStations() {
     );
     return [];
   });
+  if (stateResults.every((result) => result.status === "rejected")) {
+    // Back off briefly, but never cache the empty result for the full TTL.
+    failedUntil = Date.now() + FAILURE_BACKOFF_MS;
+    return [];
+  }
   const stations = new Map<string, GroupedStation>();
 
   for (const record of records) {
@@ -288,119 +236,34 @@ async function fetchAllStations() {
   return stationList;
 }
 
-function toNearbyStationReading(station: StationWithDistance): NearbyStationReading {
-  return {
-    co: station.co,
-    distanceKm: station.distanceKm,
-    lat: station.lat,
-    lng: station.lng,
-    lastUpdated: station.lastUpdated,
-    nh3: station.nh3,
-    no2: station.no2,
-    ozone: station.ozone,
-    pm10: station.pm10,
-    pm25: station.pm25,
-    so2: station.so2,
-    source: "CPCB",
-    stationName: station.stationName,
-  };
+function hasUsablePollutantData(station: GroupedStation) {
+  return [station.pm25, station.pm10, station.no2, station.so2, station.co, station.nh3, station.ozone].some(
+    (value) => value !== null,
+  );
 }
 
-export async function fetchAllStationReadings(): Promise<NearbyStationReading[]> {
+/** Every NCR station with at least one pollutant reading, cached for 15 minutes. */
+export async function fetchCpcbStations(): Promise<StationReading[]> {
   try {
     const stations = await fetchAllStations();
-    return stations
-      .filter((station) => hasUsablePollutantData({ ...station, distanceKm: 0 }))
-      .map((station) => toNearbyStationReading({ ...station, distanceKm: 0 }));
+    return stations.filter(hasUsablePollutantData).map((station) => ({
+      co: station.co,
+      distanceKm: 0,
+      lat: station.lat,
+      lng: station.lng,
+      lastUpdated: station.lastUpdated,
+      nh3: station.nh3,
+      no2: station.no2,
+      ozone: station.ozone,
+      pm10: station.pm10,
+      pm25: station.pm25,
+      so2: station.so2,
+      source: "CPCB" as const,
+      attribution: "CPCB via data.gov.in",
+      stationName: station.stationName,
+    }));
   } catch (error) {
-    console.warn(
-      "Could not fetch CPCB station readings",
-      error instanceof Error ? error.message : error,
-    );
+    console.warn("Could not fetch CPCB station readings", error instanceof Error ? error.message : error);
     return [];
   }
-}
-
-export async function fetchNearbyStations(
-  lat: number,
-  lng: number,
-  radiusKm = 10,
-): Promise<NearbyStationReading[]> {
-  try {
-    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return [];
-
-    const stations = await fetchAllStations();
-    return stations
-      .map((station) => ({
-        ...station,
-        distanceKm: Number(haversineKm(lat, lng, station.lat, station.lng).toFixed(2)),
-      }))
-      .filter((station) => station.distanceKm <= radiusKm)
-      .sort((a, b) => a.distanceKm - b.distanceKm)
-      .map(toNearbyStationReading);
-  } catch (error) {
-    console.warn(
-      "Could not fetch CPCB nearby stations",
-      error instanceof Error ? error.message : error,
-    );
-    return [];
-  }
-}
-
-export async function getNearestStationReading(lat: number, lng: number) {
-  const stations = await fetchNearbyStations(lat, lng);
-  // Was taking stations[0] (absolute nearest) and bailing to null if *that*
-  // station had no usable pollutant data — discarding a perfectly good
-  // reading from the next-nearest station even when it's well within the
-  // 3km support radius. CPCB stations going offline/reporting all-null is
-  // common, so this silently zeroed out sensor support more than it should
-  // have. Now picks the nearest station that actually has data.
-  const nearestStation = stations.find((station) => hasUsablePollutantData(station));
-  return nearestStation ?? null;
-}
-
-export function getPm25DeltaFromReference(pm25: number | null) {
-  if (pm25 === null) return 0;
-  return Math.round(((pm25 - CPCB_PM25_REFERENCE) / CPCB_PM25_REFERENCE) * 100);
-}
-
-export function getPrimaryPollutant(
-  classificationType: string | undefined, 
-  station: Partial<NearbyStationReading> | null
-) {
-  if (!station) return { name: "PM2.5", value: null, delta: 0 };
-  
-  if (classificationType === "dust" && station.pm10 !== null && station.pm10 !== undefined) {
-    return { name: "PM10", value: station.pm10, delta: Math.round(((station.pm10 - CPCB_PM10_REFERENCE) / CPCB_PM10_REFERENCE) * 100) };
-  }
-
-  // If PM2.5 is unavailable, PM10 can still establish a particulate event,
-  // but it cannot honestly distinguish dust from general coarse particulate.
-  if (
-    classificationType === "particulate" &&
-    station.pm25 == null &&
-    station.pm10 != null
-  ) {
-    return {
-      name: "PM10",
-      value: station.pm10,
-      delta: Math.round(((station.pm10 - CPCB_PM10_REFERENCE) / CPCB_PM10_REFERENCE) * 100),
-    };
-  }
-  
-  if (classificationType === "industrial") {
-    const no2Delta = station.no2 != null ? Math.round(((station.no2 - CPCB_NO2_REFERENCE) / CPCB_NO2_REFERENCE) * 100) : 0;
-    const so2Delta = station.so2 != null ? Math.round(((station.so2 - CPCB_SO2_REFERENCE) / CPCB_SO2_REFERENCE) * 100) : 0;
-    if (no2Delta >= so2Delta && station.no2 != null) return { name: "NO2", value: station.no2, delta: no2Delta };
-    if (station.so2 != null) return { name: "SO2", value: station.so2, delta: so2Delta };
-  }
-  
-  // Default to PM2.5 for fire/smog, or if the preferred pollutant is missing
-  return {
-    name: "PM2.5",
-    value: station.pm25 ?? null,
-    delta: station.pm25 != null
-      ? Math.round(((station.pm25 - CPCB_PM25_REFERENCE) / CPCB_PM25_REFERENCE) * 100)
-      : 0,
-  };
 }

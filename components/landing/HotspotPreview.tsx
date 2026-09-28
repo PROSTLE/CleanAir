@@ -2,8 +2,8 @@
 
 import type { Incident, Severity } from "@/lib/types";
 import { useEffect, useRef, useState } from "react";
-import { loadGoogleMaps, type GoogleMapInstance, type GoogleMapMarker } from "@/lib/googleMaps";
-import { CITY_CENTER } from "@/lib/mapConstants";
+import type { GeoJSONSource, Map as MapLibreMap } from "maplibre-gl";
+import { useCity } from "@/lib/cityContext";
 import { useT } from "@/lib/languageContext";
 
 const severityColor: Record<Severity, string> = {
@@ -14,81 +14,80 @@ const severityColor: Record<Severity, string> = {
 
 export default function HotspotPreview({ incidents }: { incidents: Incident[] }) {
   const t = useT();
+  const { city } = useCity();
   const mapNodeRef = useRef<HTMLDivElement | null>(null);
-  const mapRef = useRef<GoogleMapInstance | null>(null);
-  const markerRefs = useRef<GoogleMapMarker[]>([]);
+  const mapRef = useRef<MapLibreMap | null>(null);
   const [mapLoaded, setMapLoaded] = useState(false);
 
   useEffect(() => {
-    const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
-    if (!apiKey || !mapNodeRef.current) return;
+    if (!mapNodeRef.current) return;
+    let cancelled = false;
+    let map: MapLibreMap | null = null;
 
-    loadGoogleMaps(apiKey)
-      .then(() => {
-        if (!mapNodeRef.current) return;
-        const maps = window.google!.maps;
-        
-        const map = new maps.Map(mapNodeRef.current, {
-          center: CITY_CENTER,
-          zoom: 11,
-          disableDefaultUI: true,
-          gestureHandling: "none",
-          clickableIcons: false,
-          styles: [
-            { featureType: "poi", stylers: [{ visibility: "off" }] },
-            { featureType: "transit", stylers: [{ visibility: "off" }] },
-            { featureType: "water", elementType: "geometry", stylers: [{ color: "#e9e9e9" }] },
-            { featureType: "landscape", elementType: "geometry", stylers: [{ color: "#f5f5f5" }] },
-            { featureType: "road", elementType: "geometry", stylers: [{ color: "#ffffff" }] },
-            { featureType: "road", elementType: "labels.text.fill", stylers: [{ color: "#9ca3af" }] },
-            { featureType: "road", elementType: "labels.text.stroke", stylers: [{ color: "#ffffff" }] },
-            { elementType: "labels.text.fill", stylers: [{ color: "#6b7280" }] },
-            { elementType: "labels.text.stroke", stylers: [{ color: "#ffffff", weight: 2 }] },
-          ],
+    // Loaded on demand so the landing page's first paint doesn't wait on the map library.
+    Promise.all([import("maplibre-gl"), import("maplibre-gl/dist/maplibre-gl.css")])
+      .then(([{ default: maplibregl }]) => {
+        if (cancelled || !mapNodeRef.current) return;
+        const created = new maplibregl.Map({
+          container: mapNodeRef.current,
+          // OpenFreeMap: free, keyless OpenStreetMap vector tiles.
+          style: "https://tiles.openfreemap.org/styles/positron",
+          center: [city.center.lng, city.center.lat],
+          zoom: city.zoom,
+          interactive: false,
+          attributionControl: { compact: true },
         });
-
-        mapRef.current = map;
-        setMapLoaded(true);
+        map = created;
+        created.on("load", () => {
+          created.addSource("hotspots", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+          created.addLayer({
+            id: "hotspots",
+            type: "circle",
+            source: "hotspots",
+            paint: {
+              "circle-radius": 7,
+              "circle-color": ["get", "color"],
+              "circle-opacity": 0.9,
+              "circle-stroke-color": "#ffffff",
+              "circle-stroke-width": 2,
+            },
+          });
+          mapRef.current = created;
+          setMapLoaded(true);
+        });
       })
-      .catch((err) => console.error("Failed to load Google Maps for hero preview", err));
+      .catch((err) => console.error("Failed to load the hero preview map", err));
+
+    return () => {
+      cancelled = true;
+      map?.remove();
+      mapRef.current = null;
+    };
+    // The preview is rebuilt for each city (the parent keys it by city).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
-    if (!mapLoaded || !mapRef.current || !window.google?.maps) return;
-    const maps = window.google.maps;
-
-    // Clear old markers
-    markerRefs.current.forEach(m => m.setMap(null));
-    markerRefs.current = [];
-
-    incidents.forEach((incident) => {
-      if (!Number.isFinite(incident.latitude) || !Number.isFinite(incident.longitude)) return;
-      const color = severityColor[incident.severity] || severityColor.medium;
-      const marker = new maps.Marker({
-        map: mapRef.current,
-        position: { lat: incident.latitude, lng: incident.longitude },
-        title: incident.neighborhood,
-        icon: {
-          url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(`
-            <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <circle cx="9" cy="9" r="7" fill="${color}" fill-opacity="0.9" stroke="white" stroke-width="2"/>
-            </svg>
-          `)}`,
-          scaledSize: new maps.Size(18, 18),
-          anchor: new maps.Point(9, 9),
-        },
-      });
-      markerRefs.current.push(marker);
+    if (!mapLoaded || !mapRef.current) return;
+    (mapRef.current.getSource("hotspots") as GeoJSONSource | undefined)?.setData({
+      type: "FeatureCollection",
+      features: incidents
+        .filter((incident) => Number.isFinite(incident.latitude) && Number.isFinite(incident.longitude))
+        .map((incident) => ({
+          type: "Feature",
+          properties: { color: severityColor[incident.severity] || severityColor.medium },
+          geometry: { type: "Point", coordinates: [incident.longitude, incident.latitude] },
+        })),
     });
   }, [mapLoaded, incidents]);
 
   return (
     <aside className="hotspot-panel" aria-label="Live hotspot preview" style={{ display: 'flex', flexDirection: 'column', position: 'relative' }}>
       <div className="map-preview" style={{ flex: 1, position: 'relative', overflow: 'hidden', minHeight: '400px', padding: 0 }}>
-        {/* Google Map Container */}
-        <div 
-          ref={mapNodeRef} 
-          style={{ width: '100%', height: '100%', position: 'absolute', inset: 0, backgroundColor: '#f4f5f1' }} 
+        {/* Map container */}
+        <div
+          ref={mapNodeRef}
+          style={{ width: '100%', height: '100%', position: 'absolute', inset: 0, backgroundColor: '#f4f5f1' }}
         />
 
         {/* Clean floating header */}

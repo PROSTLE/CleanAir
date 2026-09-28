@@ -9,13 +9,20 @@ import {
   DELHI_H3_CELLS,
   forecastPM25,
   getIstHour,
+  getLocalHour,
   type SensorReading,
 } from "@/lib/forecastEngine";
 import { computeFusionConfidence } from "@/lib/fusionConfidence";
 import { isPollutionClassification, parseClassification } from "@/lib/geminiClassifier";
 import { angularDifferenceDeg, bearingDeg, getH3CellId, haversineKm } from "@/lib/geo";
-import { isInOperationalRegion } from "@/lib/operationalRegion";
-import { checkStoredSatelliteSupport, determineTier, parseSensorTimestamp } from "@/lib/supportEvidence";
+import { CITIES, cityForPoint, isInOperationalRegion, resolveCityForPoint } from "@/lib/cities";
+import {
+  checkStoredSatelliteSupport,
+  checkStoredSensorSupport,
+  determineTier,
+  parseSensorTimestamp,
+} from "@/lib/supportEvidence";
+import { PM10_BREAKPOINTS, PM25_BREAKPOINTS, usAqiToConcentration } from "@/lib/usAqi";
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
@@ -109,12 +116,84 @@ describe("upwind attribution", () => {
   });
 });
 
+// ─── cities ──────────────────────────────────────────────────────────────────
+
+describe("cities", () => {
+  it("places each capital's centre inside its own boundary", () => {
+    for (const city of CITIES) {
+      assert.equal(cityForPoint(city.center.lat, city.center.lng)?.id, city.id, city.name);
+    }
+  });
+
+  it("keeps boundaries apart and excludes the sea and neighbours", () => {
+    // Noida (Uttar Pradesh) is outside Delhi NCT but still uses Delhi's data.
+    assert.equal(cityForPoint(28.5355, 77.391), null);
+    assert.equal(resolveCityForPoint(28.5355, 77.391)?.id, "delhi");
+    // Open sea north of Jakarta (Kepulauan Seribu extent was trimmed).
+    assert.equal(cityForPoint(-5.8, 106.6), null);
+    // Nowhere near any monitored city.
+    assert.equal(resolveCityForPoint(0, 0), null);
+    assert.equal(isInOperationalRegion(Number.NaN, 77.2), false);
+  });
+
+  it("closes every boundary ring for GeoJSON", () => {
+    for (const city of CITIES) {
+      for (const ring of city.boundary) {
+        assert.deepEqual(ring[0], ring[ring.length - 1], city.name);
+      }
+    }
+  });
+});
+
+describe("stored sensor support", () => {
+  const base = {
+    source: "WAQI" as const,
+    distanceKm: 0.8,
+    primaryDelta: 120,
+    pm25Delta: 120,
+    trend: "insufficient_data" as const,
+  };
+
+  it("accepts a fresh, nearby exceedance from any network", () => {
+    assert.equal(checkStoredSensorSupport("smog", { ...base, lastUpdated: new Date().toISOString() }), true);
+  });
+
+  it("rejects a stale WAQI reading, like a stale CPCB one", () => {
+    const stale = new Date(Date.now() - 3 * 24 * 3_600_000).toISOString();
+    assert.equal(checkStoredSensorSupport("smog", { ...base, lastUpdated: stale }), false);
+    assert.equal(checkStoredSensorSupport("smog", { ...base, source: "CPCB", lastUpdated: stale }), false);
+  });
+});
+
+describe("US AQI conversion (WAQI)", () => {
+  it("inverts the 2012 EPA PM2.5 breakpoints", () => {
+    assert.equal(usAqiToConcentration(50, PM25_BREAKPOINTS), 12);
+    assert.equal(usAqiToConcentration(100, PM25_BREAKPOINTS), 35.4);
+    assert.equal(usAqiToConcentration(151, PM25_BREAKPOINTS), 55.5);
+    assert.equal(usAqiToConcentration(0, PM25_BREAKPOINTS), 0);
+  });
+
+  it("inverts PM10 and rejects unusable values", () => {
+    assert.equal(usAqiToConcentration(100, PM10_BREAKPOINTS), 154);
+    assert.equal(usAqiToConcentration(-3, PM10_BREAKPOINTS), null);
+    assert.equal(usAqiToConcentration(undefined, PM10_BREAKPOINTS), null);
+  });
+});
+
 // ─── forecast ────────────────────────────────────────────────────────────────
 
 describe("forecast engine", () => {
   it("computes hour-of-day in IST regardless of server timezone", () => {
     assert.equal(getIstHour(new Date("2026-09-25T00:00:00Z")), 5);
     assert.equal(getIstHour(new Date("2026-09-25T18:30:00Z")), 0);
+  });
+
+  it("computes hour-of-day in each city's time zone", () => {
+    const instant = new Date("2026-09-25T00:00:00Z");
+    assert.equal(getLocalHour(instant, "Asia/Shanghai"), 8);
+    assert.equal(getLocalHour(instant, "Europe/Moscow"), 3);
+    assert.equal(getLocalHour(instant, "America/Sao_Paulo"), 21);
+    assert.equal(getLocalHour(instant, "Asia/Kolkata"), 5);
   });
 
   it("uses real Delhi H3 cells", () => {

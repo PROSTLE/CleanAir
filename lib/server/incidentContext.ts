@@ -5,8 +5,9 @@ import { rankUpwindSources, type AttributionCandidate, type AttributionResult } 
 import { getRegionalFireHotspots, getFiresNear, type NearbyFireSummary } from "@/lib/earthEngineSatellite";
 import { adminDb, adminServerTimestamp } from "@/lib/firebaseAdmin";
 import { toCoordinate } from "@/lib/geo";
-import { KNOWN_SOURCES } from "@/lib/knownSources";
-import { getWindData, type WindData } from "@/lib/openWeather";
+import { resolveCityForPoint } from "@/lib/cities";
+import { getKnownSources } from "@/lib/knownSources";
+import { getWindData, type WindData } from "@/lib/weather";
 import { getCurrentAirQuality, isAirQualityConfigured, type AirQualitySnapshot } from "@/lib/server/googleAirQuality";
 import { HttpError } from "@/lib/server/http";
 import { findSensitiveSites, isPlacesConfigured, type SensitiveSite } from "@/lib/server/places";
@@ -93,10 +94,11 @@ async function getActiveIncidentCandidates(excludeId: string): Promise<Attributi
 
 export async function buildIncidentContext(target: Target): Promise<IncidentContext> {
   const { lat, lng } = target;
+  const city = resolveCityForPoint(lat, lng);
   const [windPiece, firesPiece, regional, incidentCandidates, sitesPiece, aqPiece] = await Promise.all([
-    piece(Boolean(process.env.OPENWEATHER_API_KEY?.trim()), "OPENWEATHER_API_KEY is not set.", async () => {
+    piece(true, "", async () => {
       const wind = await getWindData(lat, lng);
-      if (!wind) throw new Error("OpenWeatherMap returned no wind data.");
+      if (!wind) throw new Error("Open-Meteo returned no wind data.");
       return { windSpeedMs: wind.windSpeedMs, windDegrees: wind.windDegrees, fetchedAt: wind.fetchedAt };
     }),
     piece(true, "", async () => {
@@ -104,7 +106,7 @@ export async function buildIncidentContext(target: Target): Promise<IncidentCont
       if (summary.error) throw new Error(summary.error);
       return summary;
     }),
-    getRegionalFireHotspots().catch(() => null),
+    city ? getRegionalFireHotspots(city.id).catch(() => null) : Promise.resolve(null),
     getActiveIncidentCandidates(target.id).catch(() => [] as AttributionCandidate[]),
     piece(isPlacesConfigured(), "GOOGLE_PLACES_API_KEY is not set.", () => findSensitiveSites(lat, lng, 1000)),
     piece(isAirQualityConfigured(), "GOOGLE_AIR_QUALITY_API_KEY is not set.", () => getCurrentAirQuality(lat, lng)),
@@ -119,7 +121,7 @@ export async function buildIncidentContext(target: Target): Promise<IncidentCont
         windPiece.status === "ok"
           ? { fromDeg: windPiece.data.windDegrees, speedMs: windPiece.data.windSpeedMs }
           : null,
-      candidates: [...KNOWN_SOURCES, ...incidentCandidates],
+      candidates: [...getKnownSources(city?.id), ...incidentCandidates],
       fires: regional && !regional.error ? regional.fires : [],
     }),
   };

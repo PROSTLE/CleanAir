@@ -29,8 +29,10 @@ export type AirQualitySnapshot = {
   time: string | null;
   universalAqi: number | null;
   universalCategory: string | null;
-  indiaAqi: number | null;
-  indiaCategory: string | null;
+  /** The country's own index (CPCB in India, MEP in China, ...), as Google reports it. */
+  localAqi: number | null;
+  localCategory: string | null;
+  localIndexName: string | null;
   dominantPollutant: string | null;
   pm25: number | null;
   pm10: number | null;
@@ -49,8 +51,8 @@ export function isAirQualityConfigured() {
 
 function toSnapshot(response: AqResponse): AirQualitySnapshot {
   const universal = response.indexes?.find((index) => index.code === "uaqi");
-  // Local index for India is the CPCB National AQI.
-  const india = response.indexes?.find((index) => index.code === "ind_cpcb");
+  // LOCAL_AQI adds the country's default index (ind_cpcb, chn_mep, ...).
+  const local = response.indexes?.find((index) => index.code !== "uaqi");
   const pollutant = (code: string) => {
     const match = response.pollutants?.find((item) => item.code === code);
     const value = match?.concentration?.value;
@@ -60,9 +62,10 @@ function toSnapshot(response: AqResponse): AirQualitySnapshot {
     time: response.dateTime ?? null,
     universalAqi: universal?.aqi ?? null,
     universalCategory: universal?.category ?? null,
-    indiaAqi: india?.aqi ?? null,
-    indiaCategory: india?.category ?? null,
-    dominantPollutant: india?.dominantPollutant ?? universal?.dominantPollutant ?? null,
+    localAqi: local?.aqi ?? null,
+    localCategory: local?.category ?? null,
+    localIndexName: local?.displayName ?? null,
+    dominantPollutant: local?.dominantPollutant ?? universal?.dominantPollutant ?? null,
     pm25: pollutant("pm25"),
     pm10: pollutant("pm10"),
     no2: pollutant("no2"),

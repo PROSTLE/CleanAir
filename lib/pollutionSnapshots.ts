@@ -1,10 +1,10 @@
 import "server-only";
 
-import type { NearbyStationReading } from "@/lib/cpcbSensor";
+import type { StationReading } from "@/lib/stations";
 import type { SatelliteDataResult } from "@/lib/earthEngineSatellite";
 import { adminDb, adminServerTimestamp } from "@/lib/firebaseAdmin";
 import { getH3CellId } from "@/lib/geo";
-import type { WindData } from "@/lib/openWeather";
+import type { WindData } from "@/lib/weather";
 
 export type PollutionSnapshotInput = {
   lat: number;
@@ -12,12 +12,12 @@ export type PollutionSnapshotInput = {
   locationLabel?: string | null;
   sourceContext: "report_classification" | "manual_poll" | "scheduled_tick";
   reportId?: string | null;
-  sensor: NearbyStationReading | null;
+  sensor: StationReading | null;
   satellite: SatelliteDataResult | null;
   wind: WindData | null;
 };
 
-function serializeSensor(sensor: NearbyStationReading | null) {
+function serializeSensor(sensor: StationReading | null) {
   if (!sensor) return null;
 
   return {
