@@ -7,6 +7,7 @@ import "./operator.css";
 import "./ui.css";
 import "./forecast.css";
 import "./zone.css";
+import "./mobile.css";
 import { CityProvider } from "@/lib/cityContext";
 import { LanguageProvider } from "@/lib/languageContext";
 import Footer from "@/components/shared/Footer";

@@ -601,7 +601,8 @@ export default function DashboardView() {
 
         <ModelQualityCard incidents={incidents} />
 
-        <section className="svd-card svd-card-full">
+        {/* Integration status is for the team, not for operators on a phone. */}
+        <section className="svd-card svd-card-full vs-hide-mobile">
           <header className="svd-card-head">
             <h2 className="vs-title">
               <Icon name="database" size={17} />

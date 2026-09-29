@@ -1,0 +1,56 @@
+/* ==========================================================================
+   Phone layout (≤ 680 px). Only hides or re-flows things that are broken or
+   unnecessary on a small screen; nothing is removed from the page, and
+   desktop and tablet layouts are untouched. Loaded last so it wins.
+   ========================================================================== */
+
+@media (max-width: 680px) {
+  /* Utility: hide a desktop-only element on phones. */
+  .vs-hide-mobile {
+    display: none !important;
+  }
+
+  /* Home hero: the 3D portal squeezed the headline into a narrow column
+     beside a small bubble. Hide it and let the copy use the full width. */
+  .sv-hero-visual {
+    display: none;
+  }
+
+  .sv-hero {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "copy"
+      "notes";
+    min-height: 0;
+  }
+
+  /* Home "Our priority": a scroll-driven horizontal slider. On phones the
+     neighbouring slides bleed in, images overlap the text and the tab row is
+     cut off. The same story is told by the sections below it. */
+  .sv-priority-fullscreen-section {
+    display: none;
+  }
+
+  /* Live map: the legend covered about a third of the map. The 2D/3D switch,
+     area shortcuts and the station pop-ups still explain every marker. */
+  .map3d-legend {
+    display: none;
+  }
+
+  /* Map header: keep the hotspot count and the fire toggle, hide the
+     "OpenStreetMap layer" caption that crowded them. */
+  .map-status-card strong {
+    display: none;
+  }
+
+  /* Forecast charts (forecast page and area page): twelve hour labels
+     collided into unreadable text. Show every other one (every 6 hours). */
+  .fc-chart .recharts-xAxis-tick-labels > .recharts-cartesian-axis-tick-label:nth-child(even) {
+    display: none;
+  }
+
+  /* Developer-facing cards with nothing to do on a phone. */
+  .fc-api {
+    display: none;
+  }
+}
