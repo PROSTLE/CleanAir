@@ -23,6 +23,8 @@ export interface ReportSubmissionResult {
   /** Monitored city containing the report location, or null outside all of them. */
   cityId: string | null;
   integrityFlags: string[];
+  /** Lets this browser answer the fix-check later; null if the server couldn't issue one. */
+  trackToken: string | null;
 }
 
 /**
@@ -62,5 +64,6 @@ export async function submitCitizenReport(
     inPilotArea: payload.inPilotArea ?? true,
     cityId: payload.cityId ?? null,
     integrityFlags: payload.integrityFlags ?? [],
+    trackToken: payload.trackToken ?? null,
   };
 }

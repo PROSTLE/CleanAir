@@ -4,7 +4,8 @@ import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 
 import dynamic from "next/dynamic";
 import { collection, limit, onSnapshot, orderBy, query } from "firebase/firestore";
 import { formatStatus } from "@/components/command/commandData";
-import { latLngToCell } from "h3-js";
+import { isValidCell, latLngToCell } from "h3-js";
+import { H3_RESOLUTION } from "@/lib/geo";
 import { isInCity } from "@/lib/cities";
 import { useCity } from "@/lib/cityContext";
 import { db, isFirebaseConfigured } from "@/lib/firebase";
@@ -458,6 +459,18 @@ export default function HotspotMap({
           ${mode === "operations" ? `<span>${evidenceSummary.count === 1 ? t("map_evidence_source_single") : t("map_evidence_sources").replace("{count}", evidenceSummary.count.toString())} · ${evidenceSourceLabel}</span>` : ""}
         </div>
       `;
+    }
+
+    // Link to the public area page for this hexagon, inside the pop-up box.
+    const zoneCell =
+      selectedIncident.h3CellId && isValidCell(selectedIncident.h3CellId)
+        ? selectedIncident.h3CellId
+        : Number.isFinite(selectedIncident.latitude) && Number.isFinite(selectedIncident.longitude)
+          ? latLngToCell(selectedIncident.latitude, selectedIncident.longitude, H3_RESOLUTION)
+          : null;
+    if (zoneCell) {
+      const zoneLink = `<a class="infowindow-zone-link" href="/zone/${zoneCell}">${escapeHtml(t("zone_link_view_area"))} →</a>`;
+      content = content.replace(/<\/div>\s*$/, `${zoneLink}</div>`);
     }
 
     return { id: point.id, lat: point.lat, lng: point.lng, html: content, popupOffset: point.popupOffset };

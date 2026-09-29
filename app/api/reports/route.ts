@@ -11,6 +11,7 @@ import {
   readJson,
   verifyAppCheckIfEnforced,
 } from "@/lib/server/http";
+import { issueReportToken } from "@/lib/server/reportTokens";
 import type { IntegrityFlag, ReportIntegrity } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -140,6 +141,13 @@ export async function POST(request: Request) {
       },
     });
 
+    // Lets this browser answer "is it fixed?" later (lib/server/reportTokens.ts).
+    // Failing only costs that; the report itself is already saved.
+    const trackToken = await issueReportToken(docRef.id).catch((error) => {
+      console.warn(`Could not issue a tracking token for ${docRef.id}`, error instanceof Error ? error.message : error);
+      return null;
+    });
+
     // Classify after the response is sent. The browser no longer has to stay
     // open for its report to be analysed; /api/cron/tick sweeps anything
     // this misses (e.g. an instance recycled mid-classification).
@@ -158,6 +166,7 @@ export async function POST(request: Request) {
         inPilotArea: city !== null,
         cityId: city?.id ?? null,
         integrityFlags: integrity.flags,
+        trackToken,
       },
       { status: 201 },
     );

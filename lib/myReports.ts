@@ -6,7 +6,13 @@ import { useMemo, useSyncExternalStore } from "react";
 const STORAGE_KEY = "vayusetu_my_reports";
 const MAX_ENTRIES = 20;
 
-export type MyReport = { id: string; label: string; createdAt: string };
+export type MyReport = {
+  id: string;
+  label: string;
+  createdAt: string;
+  /** Secret from /api/reports that lets this browser answer "is it fixed?". */
+  token?: string;
+};
 
 export function loadMyReports(): MyReport[] {
   try {
@@ -26,6 +32,11 @@ export function saveMyReport(entry: MyReport) {
   } catch {
     /* storage unavailable; the tracking link on screen still works */
   }
+}
+
+/** The fix-check token for a report filed from this browser, if any. */
+export function getMyReportToken(id: string): string | null {
+  return loadMyReports().find((entry) => entry.id === id)?.token ?? null;
 }
 
 // ─── React binding ───────────────────────────────────────────────────────────

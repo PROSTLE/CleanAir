@@ -1,5 +1,25 @@
 {
   "firestore": {
     "rules": "firestore.rules"
-  }
+  },
+  "apphosting": [
+    {
+      "backendId": "cleanair-backend",
+      "rootDir": "/",
+      "ignore": [
+        "node_modules",
+        ".git",
+        ".next",
+        ".env*",
+        "credentials",
+        "*-firebase-adminsdk-*.json",
+        "*-service-account*.json",
+        "app/zz-preview",
+        "presentation",
+        "whatsapp_bot",
+        "firebase-debug.log",
+        "firebase-debug.*.log"
+      ]
+    }
+  ]
 }

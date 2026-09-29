@@ -27,6 +27,8 @@ interface ForecastChartProps {
   arima?: ComparisonPoint[] | null;
   /** Google Air Quality API hourly PM2.5 forecast. */
   google?: ComparisonPoint[] | null;
+  /** History is Google's modelled estimate, not station readings: label it so. */
+  modelled?: boolean;
 }
 
 interface ChartPoint {
@@ -59,9 +61,11 @@ function valueAt(series: ComparisonPoint[] | null | undefined, time: string) {
 function ChartTooltip({
   active,
   payload,
+  modelled = false,
 }: {
   active?: boolean;
   payload?: Array<{ payload: ChartPoint }>;
+  modelled?: boolean;
 }) {
   const t = useT();
   const { city } = useCity();
@@ -75,7 +79,11 @@ function ChartTooltip({
     <div className="fc-tooltip">
       <p className="fc-tooltip-head">
         <span>{point.label} {cityTimeZoneLabel(city)}</span>
-        <span>{isForecast ? t("forecast_chart_legend_forecast") : t("forecast_chart_legend_actual")}</span>
+        <span>
+          {isForecast
+            ? t("forecast_chart_legend_forecast")
+            : t(modelled ? "forecast_chart_legend_modelled" : "forecast_chart_legend_actual")}
+        </span>
       </p>
       {value !== undefined && (
         <p className="fc-tooltip-value">
@@ -109,7 +117,7 @@ function ChartTooltip({
   );
 }
 
-export default function ForecastChart({ forecast, history, arima, google }: ForecastChartProps) {
+export default function ForecastChart({ forecast, history, arima, google, modelled = false }: ForecastChartProps) {
   const t = useT();
   const { city } = useCity();
   const points: ChartPoint[] = [];
@@ -176,7 +184,7 @@ export default function ForecastChart({ forecast, history, arima, google }: Fore
             width={44}
           />
 
-          <Tooltip content={<ChartTooltip />} cursor={{ stroke: "rgba(16, 26, 21, 0.18)", strokeWidth: 1 }} />
+          <Tooltip content={<ChartTooltip modelled={modelled} />} cursor={{ stroke: "rgba(16, 26, 21, 0.18)", strokeWidth: 1 }} />
 
           <ReferenceLine
             y={city.standards.pm25}
@@ -254,7 +262,7 @@ export default function ForecastChart({ forecast, history, arima, google }: Fore
       <ul className="fc-legend">
         <li>
           <span className="fc-swatch" style={{ borderTopColor: COLOR.actual }} />
-          {t("forecast_chart_legend_actual")}
+          {t(modelled ? "forecast_chart_legend_modelled" : "forecast_chart_legend_actual")}
         </li>
         <li>
           <span className="fc-swatch is-dashed" style={{ borderTopColor: COLOR.predicted }} />

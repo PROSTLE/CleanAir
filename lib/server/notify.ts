@@ -27,6 +27,13 @@ const MESSAGES: Record<NotifyEvent, Record<"en" | "hi", (area: string, action?: 
   },
 };
 
+// Appended to "resolved" when the bot can relay answers back
+// (/api/closure/whatsapp, WHATSAPP_CLOSURE_SECRET on both sides).
+const CLOSURE_PROMPT: Record<"en" | "hi", string> = {
+  en: "Is it really gone? Reply FIXED if it is, or STILL if it is still there.",
+  hi: "क्या यह सच में ठीक हो गया? ठीक हो गया हो तो FIXED लिखें, अब भी है तो STILL लिखें।",
+};
+
 function twilioConfig() {
   const sid = process.env.TWILIO_ACCOUNT_SID?.trim();
   const token = process.env.TWILIO_AUTH_TOKEN?.trim();
@@ -89,7 +96,9 @@ export async function notifyReporters(
     }
     const lang = contact.lang === "hi" ? "hi" : "en";
     try {
-      const sid = await sendWhatsApp(contact.phone, MESSAGES[event][lang](details.area, details.action));
+      const askClosure = event === "resolved" && Boolean(process.env.WHATSAPP_CLOSURE_SECRET?.trim());
+      const body = MESSAGES[event][lang](details.area, details.action) + (askClosure ? `\n\n${CLOSURE_PROMPT[lang]}` : "");
+      const sid = await sendWhatsApp(contact.phone, body);
       summary.sent += 1;
       await snap.ref.update({
         notifications: FieldValue.arrayUnion({ event, sid, at: new Date().toISOString() }),

@@ -22,6 +22,39 @@ import { parseSensorTimestamp, priorityRank, TIER_LABELS } from "@/lib/supportEv
 import { formatStatus, getIncidentAge } from "@/components/command/commandData";
 import type { HazardType, Incident, Severity } from "@/lib/types";
 import { useT } from "@/lib/languageContext";
+import { closureDisplayState } from "@/lib/closure";
+import { chronicReasonText, type RecurrenceSummary } from "@/lib/recurrence";
+import { getSlaStatusNow } from "@/lib/sla";
+
+type RecurrenceByCell = Record<string, RecurrenceSummary | { error: string }>;
+
+function chronicSummary(entry: RecurrenceByCell[string] | undefined) {
+  return entry && "chronic" in entry && entry.chronic ? entry : null;
+}
+
+/** Repeat-hotspot, overdue and resident-dispute flags for one queue row. */
+function QueueChips({ incident, recurrence }: { incident: Incident; recurrence: RecurrenceSummary | null }) {
+  const t = useT();
+  const sla = getSlaStatusNow({
+    priority: incident.workOrder?.priority,
+    openedAtMs: Date.parse(incident.timestamp),
+    resolved: incident.status === "resolved",
+  });
+  const disputed = closureDisplayState(incident.closure) === "disputed";
+  return (
+    <>
+      {disputed && <span className="svd-mini-chip is-warn">{t("closure_chip_disputed")}</span>}
+      {recurrence && (
+        <span className="svd-mini-chip is-alert" title={recurrence.chronicReasons.map((r) => chronicReasonText(r, t)).join(" · ")}>
+          {t("dash_chip_chronic")}
+        </span>
+      )}
+      {sla?.overdueHours && (
+        <span className="svd-mini-chip is-warn">{t("sla_overdue").replace("{hours}", String(sla.overdueHours))}</span>
+      )}
+    </>
+  );
+}
 
 /** Every empty metric renders as this — never a zero that could read as a real measurement. */
 const EMPTY = "—";
@@ -286,6 +319,29 @@ export default function DashboardView() {
   const rows = active.slice(0, 15);
   const mapIncidents = useMemo(() => [...active, ...queue], [active, queue]);
 
+  // 30-day repeat-hotspot history for the cells in the queue (one request).
+  const rowCells = [...new Set(rows.map((incident) => incident.h3CellId).filter((cell): cell is string => !!cell))]
+    .sort()
+    .slice(0, 20)
+    .join(",");
+  const [recurrenceFeed, setRecurrenceFeed] = useState<{ key: string; cells: RecurrenceByCell } | null>(null);
+  useEffect(() => {
+    if (!rowCells) return;
+    let cancelled = false;
+    fetch(`/api/zones/recurrence?cells=${rowCells}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: { cells?: RecurrenceByCell } | null) => {
+        if (!cancelled && data?.cells) setRecurrenceFeed({ key: rowCells, cells: data.cells });
+      })
+      .catch(() => {
+        /* chips simply don't show */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [rowCells]);
+  const recurrenceByCell = recurrenceFeed?.key === rowCells ? recurrenceFeed.cells : {};
+
   return (
     <div className="svd">
       <header className="svd-head">
@@ -378,6 +434,7 @@ export default function DashboardView() {
                     <td className="svd-status">
                       {incident.dispatchStatus === "dispatched" ? t("dash_dispatched") : formatStatus(incident.status)}
                       {incident.workOrder && <span className="svd-mini-chip">{t("dash_work_order_ready")}</span>}
+                      <QueueChips incident={incident} recurrence={chronicSummary(recurrenceByCell[incident.h3CellId ?? ""])} />
                     </td>
                     <td>
                       <button type="button" className="svd-action" onClick={() => setSelectedId(incident.id)}>

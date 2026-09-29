@@ -1,12 +1,10 @@
 import "server-only";
 
 import * as ee from "@google/earthengine";
-import { readFile } from "node:fs/promises";
-import path from "node:path";
 import { getCity, resolveCityForPoint, type CityConfig } from "@/lib/cities";
 import { getH3CellId, haversineKm } from "@/lib/geo";
+import { getServiceAccountKey, parseServiceAccountKey } from "@/lib/server/serviceAccount";
 
-const EE_KEY_PATH = path.join(process.cwd(), "credentials", "earth-engine-key.json");
 // Near-real-time products appear within hours of the overpass; the offline
 // (OFFL) reprocessing lags by days. The *current* window reads NRTI so a
 // report is compared against today's column, with OFFL as a fallback. The
@@ -195,28 +193,22 @@ function initializeEarthEngine(projectId?: string) {
 }
 
 /**
- * The service-account key comes from EARTH_ENGINE_SERVICE_ACCOUNT_KEY (raw
- * JSON or base64 — the form App Hosting / Secret Manager can inject), else
- * from the local, gitignored credentials/earth-engine-key.json used in dev.
+ * Earth Engine authenticates as the app's service account
+ * (FIREBASE_SERVICE_ACCOUNT_KEY, see lib/server/serviceAccount.ts), which
+ * needs Earth Engine access in its project. EARTH_ENGINE_SERVICE_ACCOUNT_KEY
+ * can override it with a dedicated account.
  */
 async function loadEarthEngineKey(): Promise<EarthEngineKey> {
-  const fromEnv = process.env.EARTH_ENGINE_SERVICE_ACCOUNT_KEY?.trim();
-  if (fromEnv) {
-    const json = fromEnv.startsWith("{")
-      ? fromEnv
-      : Buffer.from(fromEnv, "base64").toString("utf8");
-    return JSON.parse(json) as EarthEngineKey;
-  }
-  try {
-    return JSON.parse(await readFile(EE_KEY_PATH, "utf8")) as EarthEngineKey;
-  } catch {
-    // Don't surface filesystem paths in API responses.
-    throw new Error("Earth Engine is not configured (set EARTH_ENGINE_SERVICE_ACCOUNT_KEY).");
-  }
+  const key =
+    parseServiceAccountKey(process.env.EARTH_ENGINE_SERVICE_ACCOUNT_KEY) ?? getServiceAccountKey();
+  if (!key) throw new Error("Earth Engine is not configured (set FIREBASE_SERVICE_ACCOUNT_KEY).");
+  return { client_email: key.client_email, private_key: key.private_key, project_id: key.project_id ?? undefined };
 }
 
-export function isEarthEngineKeyConfigured(fileExists: boolean) {
-  return Boolean(process.env.EARTH_ENGINE_SERVICE_ACCOUNT_KEY?.trim()) || fileExists;
+export function isEarthEngineKeyConfigured() {
+  return Boolean(
+    process.env.EARTH_ENGINE_SERVICE_ACCOUNT_KEY?.trim() || process.env.FIREBASE_SERVICE_ACCOUNT_KEY?.trim(),
+  );
 }
 
 async function ensureEarthEngineReady() {
@@ -574,5 +566,68 @@ export async function getFiresNear(lat: number, lng: number, radiusKm = 5): Prom
     windowStart: regional.windowStart,
     windowEnd: regional.windowEnd,
     ...(regional.error ? { error: regional.error } : {}),
+  };
+}
+
+// ─── Population (WorldPop) ───────────────────────────────────────────────────
+// WorldPop Global Project, 100 m residential population estimates, published
+// in Earth Engine as WorldPop/GP/100m/pop (band "population", one image per
+// country per year). The newest year covering the point is used and reported,
+// so the UI can say which year the estimate is for.
+const WORLDPOP_COLLECTION = "WorldPop/GP/100m/pop";
+const WORLDPOP_BAND = "population";
+const WORLDPOP_SCALE_METERS = 100;
+
+export type PopulationEstimate = {
+  /** Estimated residents within `radiusKm` of the point. */
+  population: number;
+  radiusKm: number;
+  /** WorldPop estimate year actually used. */
+  year: number;
+  source: "WorldPop (Earth Engine)";
+  computedAt: string;
+};
+
+export async function getPopulationNear(lat: number, lng: number, radiusKm = 1): Promise<PopulationEstimate> {
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) throw new Error("lat and lng must be valid numbers.");
+  await withTimeout(ensureEarthEngineReady(), REQUEST_TIMEOUT_MS, "Earth Engine auth");
+
+  const region = ee.Geometry.Point([lng, lat]).buffer(radiusKm * 1000);
+  const images = ee.ImageCollection(WORLDPOP_COLLECTION).filterBounds(region);
+  const year = await withTimeout(
+    getInfo<number | null>(images.aggregate_max("year")),
+    REQUEST_TIMEOUT_MS,
+    "Earth Engine WorldPop year lookup",
+  );
+  if (typeof year !== "number" || !Number.isFinite(year)) {
+    throw new Error("WorldPop has no population estimate covering this point.");
+  }
+
+  // A 1 km circle can straddle a border, so mosaic every image for that year.
+  const reduction = images
+    .filter(ee.Filter.eq("year", year))
+    .select(WORLDPOP_BAND)
+    .mosaic()
+    .reduceRegion({
+      reducer: ee.ApiFunction._call("Reducer.sum"),
+      geometry: region,
+      scale: WORLDPOP_SCALE_METERS,
+      maxPixels: 1e9,
+    });
+  const total = await withTimeout(
+    getInfo<number | null>(reduction.get(WORLDPOP_BAND)),
+    REQUEST_TIMEOUT_MS,
+    "Earth Engine WorldPop reduction",
+  );
+  if (typeof total !== "number" || !Number.isFinite(total)) {
+    throw new Error("WorldPop returned no population value for this area.");
+  }
+
+  return {
+    population: Math.round(total),
+    radiusKm,
+    year,
+    source: "WorldPop (Earth Engine)",
+    computedAt: new Date().toISOString(),
   };
 }

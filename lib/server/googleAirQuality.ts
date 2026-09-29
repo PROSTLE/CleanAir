@@ -131,3 +131,110 @@ export function getAirQualityForecast(lat: number, lng: number, hours = 24) {
     return (response.hourlyForecasts ?? []).map(toSnapshot);
   });
 }
+
+// ─── Health recommendations ──────────────────────────────────────────────────
+// The Air Quality API's HEALTH_RECOMMENDATIONS extra computation returns
+// Google's own advice for the current conditions, for the general population
+// and six at-risk groups, in the requested language. Shown to residents as
+// Google wrote it, so no health advice is authored or generated here.
+export const HEALTH_GROUPS = [
+  "generalPopulation",
+  "children",
+  "elderly",
+  "lungDiseasePopulation",
+  "heartDiseasePopulation",
+  "pregnantWomen",
+  "athletes",
+] as const;
+
+export type HealthGroup = (typeof HEALTH_GROUPS)[number];
+
+export type HealthAdvice = {
+  time: string | null;
+  localAqi: number | null;
+  localCategory: string | null;
+  localIndexName: string | null;
+  universalAqi: number | null;
+  universalCategory: string | null;
+  languageCode: string;
+  recommendations: Partial<Record<HealthGroup, string>>;
+};
+
+type AqHealthResponse = AqResponse & { healthRecommendations?: Record<string, unknown> };
+
+export function getHealthAdvice(lat: number, lng: number, languageCode = "en") {
+  return cached(cacheKey(`health:${languageCode}`, lat, lng), async (): Promise<HealthAdvice> => {
+    const response = await post<AqHealthResponse>("currentConditions:lookup", {
+      location: { latitude: lat, longitude: lng },
+      extraComputations: ["LOCAL_AQI", "HEALTH_RECOMMENDATIONS"],
+      languageCode,
+    });
+    const snapshot = toSnapshot(response);
+    const recommendations: Partial<Record<HealthGroup, string>> = {};
+    for (const group of HEALTH_GROUPS) {
+      const text = response.healthRecommendations?.[group];
+      if (typeof text === "string" && text.trim()) recommendations[group] = text.trim();
+    }
+    return {
+      time: snapshot.time,
+      localAqi: snapshot.localAqi,
+      localCategory: snapshot.localCategory,
+      localIndexName: snapshot.localIndexName,
+      universalAqi: snapshot.universalAqi,
+      universalCategory: snapshot.universalCategory,
+      languageCode,
+      recommendations,
+    };
+  });
+}
+
+// ─── Hourly history ─────────────────────────────────────────────────────────
+// history:lookup returns up to 720 past hours (30 days), 168 per page, for
+// any point at Google's 500 m resolution. It is Google's modelled estimate,
+// not a station measurement; callers label it that way. Only PM values that
+// come back in µg/m³ are kept (gases are reported in ppb, so they're dropped
+// rather than converted with an assumed temperature and pressure).
+export type ModelledHour = { time: string; pm25: number | null; pm10: number | null };
+
+type AqHistoryResponse = {
+  hoursInfo?: Array<{ dateTime?: string; pollutants?: AqPollutant[] }>;
+  nextPageToken?: string;
+  error?: { message?: string };
+};
+
+const HISTORY_PAGE_SIZE = 168;
+const MAX_HISTORY_HOURS = 720;
+
+function microgramValue(pollutants: AqPollutant[] | undefined, code: string) {
+  const match = pollutants?.find((item) => item.code === code);
+  const value = match?.concentration?.value;
+  return match?.concentration?.units === "MICROGRAMS_PER_CUBIC_METER" && typeof value === "number" && Number.isFinite(value)
+    ? Number(value.toFixed(1))
+    : null;
+}
+
+export async function getAirQualityHistory(lat: number, lng: number, hours = 72): Promise<ModelledHour[]> {
+  const span = Math.max(1, Math.min(MAX_HISTORY_HOURS, Math.round(hours)));
+  const out: ModelledHour[] = [];
+  let pageToken: string | undefined;
+  do {
+    const response = await post<AqHistoryResponse>("history:lookup", {
+      location: { latitude: lat, longitude: lng },
+      hours: span,
+      pageSize: Math.min(HISTORY_PAGE_SIZE, span),
+      extraComputations: ["POLLUTANT_CONCENTRATION"],
+      universalAqi: false,
+      ...(pageToken ? { pageToken } : {}),
+    });
+    for (const hour of response.hoursInfo ?? []) {
+      if (!hour.dateTime) continue;
+      out.push({
+        time: hour.dateTime,
+        pm25: microgramValue(hour.pollutants, "pm25"),
+        pm10: microgramValue(hour.pollutants, "pm10"),
+      });
+    }
+    pageToken = response.nextPageToken || undefined;
+  } while (pageToken);
+  return out.sort((a, b) => Date.parse(a.time) - Date.parse(b.time));
+}

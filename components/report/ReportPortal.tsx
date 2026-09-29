@@ -11,6 +11,7 @@ import { useCity } from "@/lib/cityContext";
 import { db, isFirebaseConfigured } from "@/lib/firebase";
 import { hasPollutionSignal, type FirestoreReport } from "@/lib/firestoreReports";
 import { readPhotoMeta, type PhotoMeta } from "@/lib/exif";
+import { getH3CellId } from "@/lib/geo";
 import { saveMyReport, useMyReports } from "@/lib/myReports";
 import { submitCitizenReport } from "@/lib/reportSubmissions";
 import { useLanguage, useT } from "@/lib/languageContext";
@@ -190,6 +191,8 @@ export default function ReportPortal() {
   const [photoMeta, setPhotoMeta] = useState<PhotoMeta | null>(null);
   const [inPilotArea, setInPilotArea] = useState(true);
   const [filedCityId, setFiledCityId] = useState<string | null>(null);
+  // H3 cell of the submitted location, for the "About this area" link.
+  const [submittedCell, setSubmittedCell] = useState<string | null>(null);
   const myReports = useMyReports();
   const recordingCleanupRef = useRef<(() => void) | null>(null);
 
@@ -429,7 +432,13 @@ export default function ReportPortal() {
       setStoredInFirebase(submission.stored);
       setInPilotArea(submission.inPilotArea);
       setFiledCityId(submission.cityId);
-      saveMyReport({ id: submission.id, label: location.label, createdAt: new Date().toISOString() });
+      saveMyReport({
+        id: submission.id,
+        label: location.label,
+        createdAt: new Date().toISOString(),
+        ...(submission.trackToken ? { token: submission.trackToken } : {}),
+      });
+      setSubmittedCell(submission.inPilotArea ? getH3CellId(location) : null);
       if (submission.stored) {
         setClassificationFeedback({
           message: "Analyzing your photo...",
@@ -708,6 +717,11 @@ export default function ReportPortal() {
                 {submissionId && (
                   <Link href={`/track/${submissionId}`} className="rp-result-link">
                     {t("report_track_link")} →
+                  </Link>
+                )}
+                {submittedCell && (
+                  <Link href={`/zone/${submittedCell}`} className="rp-result-link">
+                    {t("zone_link_about_area")} →
                   </Link>
                 )}
                 <Link href="/map" className="rp-result-link">{t("report_form_see_nearby")} →</Link>

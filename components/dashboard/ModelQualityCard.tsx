@@ -46,6 +46,10 @@ export default function ModelQualityCard({ incidents }: { incidents: Incident[] 
   const confirmed = incidents.filter((incident) => incident.outcome === "confirmed").length;
   const falsePositives = incidents.filter((incident) => incident.outcome === "false_positive").length;
   const judged = confirmed + falsePositives;
+  // Resident fix-checks (lib/closure.ts): what reporters said after "resolved".
+  const residentConfirmed = incidents.filter((incident) => incident.closure?.state === "confirmed").length;
+  const residentDisputed = incidents.filter((incident) => incident.closure?.state === "disputed").length;
+  const residentAnswered = residentConfirmed + residentDisputed;
 
   return (
     <section className="svd-card svd-card-wide">
@@ -67,6 +71,17 @@ export default function ModelQualityCard({ incidents }: { incidents: Incident[] 
         <li>
           <span>{t("quality_confirmed_fp")}</span>
           <strong>{judged === 0 ? "—" : `${confirmed} / ${falsePositives}`}</strong>
+        </li>
+        <li>
+          <span>{t("quality_resident_confirmed")}</span>
+          <strong>
+            {residentAnswered === 0 ? "—" : pct(residentConfirmed / residentAnswered)}
+            <em>{t("quality_n").replace("{n}", String(residentAnswered))}</em>
+          </strong>
+        </li>
+        <li>
+          <span>{t("quality_resident_disputed")}</span>
+          <strong>{residentAnswered === 0 ? "—" : residentDisputed}</strong>
         </li>
         {evaluation && evaluation !== "missing" ? (
           <>

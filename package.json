@@ -1,6 +1,7 @@
 {
   "name": "airhack",
   "version": "0.1.0",
+  "packageManager": "pnpm@10.34.5",
   "private": true,
   "scripts": {
     "dev": "next dev",

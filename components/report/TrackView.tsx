@@ -4,11 +4,15 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { doc, onSnapshot } from "firebase/firestore";
 import LiveIndicator from "@/components/shared/LiveIndicator";
+import ReadAloud from "@/components/shared/ReadAloud";
+import { closureDisplayState, type ClosureAnswer } from "@/lib/closure";
 import { formatCityTime, getCity, resolveCityForPoint } from "@/lib/cities";
 import { db, isFirebaseConfigured } from "@/lib/firebase";
 import { toCoordinate } from "@/lib/geo";
 import type { FirestoreReport } from "@/lib/firestoreReports";
 import { useT } from "@/lib/languageContext";
+import { getMyReportToken } from "@/lib/myReports";
+import { getSlaStatusNow } from "@/lib/sla";
 import { TIER_LABELS } from "@/lib/supportEvidence";
 
 type StepState = "done" | "current" | "waiting" | "stopped";
@@ -87,9 +91,84 @@ function buildSteps(report: TrackedReport, t: (key: string) => string): Step[] {
   ];
 }
 
+type LinkedIncident = Pick<FirestoreReport, "workOrder" | "status" | "createdAt" | "closure">;
+
+/** "Is it fixed?" — shown once an operator resolves the hotspot (lib/closure.ts). */
+function ClosureCard({ reportId, report }: { reportId: string; report: TrackedReport }) {
+  const t = useT();
+  const [token] = useState(() => (typeof window === "undefined" ? null : getMyReportToken(reportId)));
+  const [sending, setSending] = useState<ClosureAnswer | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const state = closureDisplayState(report.closure);
+  if (!state) return null;
+
+  const answer = async (value: ClosureAnswer) => {
+    setSending(value);
+    setError(null);
+    try {
+      const response = await fetch(`/api/reports/${reportId}/closure`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token, answer: value }),
+      });
+      const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+      if (!response.ok) throw new Error(payload?.error ?? `Request failed (${response.status}).`);
+      // The report listener picks up the new state.
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSending(null);
+    }
+  };
+
+  return (
+    <section className="svd-closure svd-closure-inline" aria-live="polite">
+      <h2>{t("closure_title")}</h2>
+      {state === "awaiting" && (
+        <>
+          <p>{t("closure_question")}</p>
+          {token ? (
+            <div className="svd-closure-buttons">
+              <button
+                type="button"
+                className="svd-btn svd-btn-primary"
+                disabled={sending !== null}
+                onClick={() => void answer("fixed")}
+              >
+                {sending === "fixed" ? t("drawer_working") : t("closure_answer_fixed")}
+              </button>
+              <button
+                type="button"
+                className="svd-btn"
+                disabled={sending !== null}
+                onClick={() => void answer("not_fixed")}
+              >
+                {sending === "not_fixed" ? t("drawer_working") : t("closure_answer_not_fixed")}
+              </button>
+            </div>
+          ) : (
+            <p className="svd-muted-note">{t("closure_other_device")}</p>
+          )}
+          {report.closure?.deadline && (
+            <p className="svd-muted-note">
+              {t("closure_deadline").replace("{time}", formatTime(report, { toDate: () => new Date(report.closure!.deadline) }) ?? "")}
+            </p>
+          )}
+        </>
+      )}
+      {state === "confirmed" && <p>{t("closure_state_confirmed")}</p>}
+      {state === "disputed" && <p>{t("closure_state_disputed")}</p>}
+      {state === "superseded" && <p>{t("closure_state_superseded")}</p>}
+      {state === "unanswered" && <p>{t("closure_state_unanswered")}</p>}
+      {error && <p className="svd-form-error">{error}</p>}
+    </section>
+  );
+}
+
 export default function TrackView({ reportId }: { reportId: string }) {
   const t = useT();
   const [report, setReport] = useState<TrackedReport | null>(null);
+  const [incident, setIncident] = useState<{ id: string; data: LinkedIncident } | null>(null);
   const [state, setState] = useState<"loading" | "ready" | "missing" | "error" | "unconfigured">(
     isFirebaseConfigured && db ? "loading" : "unconfigured",
   );
@@ -109,6 +188,29 @@ export default function TrackView({ reportId }: { reportId: string }) {
       () => setState("error"),
     );
   }, [reportId]);
+
+  // The incident this report was promoted into carries the work-order
+  // priority behind the "city target" line.
+  const incidentId = report?.incidentId ?? null;
+  useEffect(() => {
+    if (!isFirebaseConfigured || !db || !incidentId) return;
+    return onSnapshot(
+      doc(db, "incidents", incidentId),
+      (snapshot) => setIncident(snapshot.exists() ? { id: incidentId, data: snapshot.data() as LinkedIncident } : null),
+      () => setIncident(null),
+    );
+  }, [incidentId]);
+
+  const linkedIncident = incident && incident.id === incidentId ? incident.data : null;
+  const sla = linkedIncident
+    ? getSlaStatusNow({
+        priority: linkedIncident.workOrder?.priority,
+        openedAtMs: linkedIncident.createdAt?.toDate?.().getTime() ?? NaN,
+        resolved: linkedIncident.status === "resolved",
+      })
+    : null;
+  const steps = report ? buildSteps(report, t) : [];
+  const spokenSteps = steps.map((step) => `${t(step.key)}. ${step.detail}.`).join(" ");
 
   return (
     <div className="svd svd-track">
@@ -134,14 +236,17 @@ export default function TrackView({ reportId }: { reportId: string }) {
       {state === "ready" && report && (
         <div className="svd-track-grid">
           <section className="svd-card">
-            <header className="svd-card-head">
-              <h2>{report.location?.label ?? t("drawer_unknown_location")}</h2>
-              <p>
-                {t("track_report_id")}: {reportId}
-              </p>
+            <header className="svd-card-head svd-card-head-split">
+              <div>
+                <h2>{report.location?.label ?? t("drawer_unknown_location")}</h2>
+                <p>
+                  {t("track_report_id")}: {reportId}
+                </p>
+              </div>
+              <ReadAloud text={spokenSteps} />
             </header>
             <ol className="svd-timeline">
-              {buildSteps(report, t).map((step) => (
+              {steps.map((step) => (
                 <li key={step.key} className={`svd-timeline-step is-${step.state}`}>
                   <span className="svd-timeline-dot" aria-hidden="true" />
                   <div>
@@ -152,15 +257,33 @@ export default function TrackView({ reportId }: { reportId: string }) {
                 </li>
               ))}
             </ol>
+            {sla && (
+              <p className={sla.overdueHours ? "svd-callout" : "svd-muted-note"}>
+                {t("track_city_target").replace("{hours}", String(sla.targetHours))}
+                {sla.overdueHours ? ` · ${t("sla_overdue").replace("{hours}", String(sla.overdueHours))}` : ""}
+              </p>
+            )}
+            <ClosureCard reportId={reportId} report={report} />
           </section>
 
-          {report.photoUrl && (
-            <section className="svd-card">
-              {/* eslint-disable-next-line @next/next/no-img-element -- remote ImgBB evidence photo */}
-              <img className="svd-drawer-photo" src={report.photoUrl} alt={t("drawer_photo_alt")} />
-              {report.note && <p className="svd-muted-note">“{report.note}”</p>}
-            </section>
-          )}
+          <div>
+            {report.photoUrl && (
+              <section className="svd-card">
+                {/* eslint-disable-next-line @next/next/no-img-element -- remote ImgBB evidence photo */}
+                <img className="svd-drawer-photo" src={report.photoUrl} alt={t("drawer_photo_alt")} />
+                {report.note && <p className="svd-muted-note">“{report.note}”</p>}
+              </section>
+            )}
+            {report.h3CellId && (
+              <section className="svd-card svd-closure">
+                <h2>{t("zone_link_about_area")}</h2>
+                <p>{t("track_area_detail")}</p>
+                <Link href={`/zone/${report.h3CellId}`} className="sv-underline-link">
+                  {t("zone_link_open")} →
+                </Link>
+              </section>
+            )}
+          </div>
         </div>
       )}
     </div>

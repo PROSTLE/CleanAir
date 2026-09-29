@@ -23,7 +23,7 @@ import { useT } from "@/lib/languageContext";
 type ForecastApiResponse = ForecastResult & {
   history?: SensorReading[];
   source?: "bigquery";
-  dataSource?: "live" | "archive";
+  dataSource?: "live" | "archive" | "modelled";
   station?: string;
   isLiveHistory?: boolean;
   historyAgeHours?: number | null;
@@ -297,14 +297,25 @@ export default function ForecastPage() {
     ? `${formatCityTime(city, forecast.historyEnd)} ${tzLabel}`
     : null;
 
+  // Modelled history is recent but not measured: it never shows as "live".
+  const isModelled = meta?.dataSource === "modelled";
   const liveState: LiveState =
-    loading && !forecast ? "connecting" : !forecast ? "offline" : meta?.isLiveHistory ? "live" : "archive";
-  const liveLabel = {
-    live: t("fc_state_live"),
-    archive: t("fc_state_archive"),
-    connecting: t("fc_state_connecting"),
-    offline: t("fc_state_offline"),
-  }[liveState];
+    loading && !forecast
+      ? "connecting"
+      : !forecast
+        ? "offline"
+        : meta?.isLiveHistory && !isModelled
+          ? "live"
+          : "archive";
+  const liveLabel =
+    forecast && isModelled
+      ? t("fc_state_modelled")
+      : {
+          live: t("fc_state_live"),
+          archive: t("fc_state_archive"),
+          connecting: t("fc_state_connecting"),
+          offline: t("fc_state_offline"),
+        }[liveState];
 
   const backtestBeatsBaseline = meta?.backtest ? meta.backtest.maeHeuristic <= meta.backtest.maePersistence : null;
   const arimaPeak = meta?.arima?.points?.length ? Math.max(...meta.arima.points.map((point) => point.value)) : null;
@@ -330,7 +341,7 @@ export default function ForecastPage() {
               <ul className="vs-meta fc-provenance">
                 <li>
                   <Icon name="database" size={15} />
-                  {t("fc_meta_source_generic")}
+                  {isModelled ? t("fc_meta_source_modelled") : t("fc_meta_source_generic")}
                 </li>
                 <li>
                   <Icon name="hexagon" size={15} />
@@ -412,6 +423,15 @@ export default function ForecastPage() {
                 </div>
               </div>
             </section>
+          )}
+
+          {forecast && meta && isModelled && (
+            <p className="fc-notice" role="status">
+              <Icon name="layers" size={16} />
+              <span>
+                <strong>{t("fc_modelled_title")}</strong> {t("fc_modelled_body")}
+              </span>
+            </p>
           )}
 
           {forecast && meta && !meta.isLiveHistory && (
@@ -505,9 +525,12 @@ export default function ForecastPage() {
                     <Icon name="chart" size={18} />
                     {t("forecast_chart_title")}
                   </h2>
-                  <p>{t("forecast_chart_subtitle_tz").replace("{tz}", tzLabel)}</p>
+                  <p>
+                    {(isModelled ? t("forecast_chart_subtitle_modelled_tz") : t("forecast_chart_subtitle_tz")).replace("{tz}", tzLabel)}
+                  </p>
                 </header>
                 <ForecastChart
+                  modelled={isModelled}
                   forecast={forecast}
                   history={history}
                   arima={meta?.arima?.points?.map((point) => ({ time: point.time, value: point.value })) ?? null}
@@ -580,7 +603,13 @@ export default function ForecastPage() {
                   </li>
                   <li>
                     <span className="fc-model-name">{t("forecast_model_source")}</span>
-                    <strong>{meta?.dataSource === "live" ? t("forecast_source_live_generic") : t("forecast_source_archive")}</strong>
+                    <strong>
+                      {meta?.dataSource === "live"
+                        ? t("forecast_source_live_generic")
+                        : isModelled
+                          ? t("forecast_source_modelled")
+                          : t("forecast_source_archive")}
+                    </strong>
                     <p>{meta?.station ? `${t("forecast_station")}: ${meta.station}` : "—"}</p>
                   </li>
                 </ul>

@@ -19,6 +19,7 @@ import {
   queryLiveHistory,
   type ArimaPoint,
 } from "@/lib/server/bigqueryLive";
+import { getModelledHistory, isModelledHistoryConfigured, MODELLED_SOURCE } from "@/lib/server/modelledHistory";
 
 // History whose newest reading is older than this is an archive, not the
 // current state of the air.
@@ -34,7 +35,8 @@ export type ForecastServiceResult =
       history: SensorReading[];
       source: "bigquery";
       cityId: string;
-      dataSource: "live" | "archive";
+      /** "modelled" = Google Air Quality history, used only when no station history is usable. */
+      dataSource: "live" | "archive" | "modelled";
       station: string;
       isLiveHistory: boolean;
       historyAgeHours: number | null;
@@ -77,7 +79,7 @@ export async function getForecastForCell(h3CellId: string): Promise<ForecastServ
 
   const cell = resolveForecastCell(h3CellId);
   let history: SensorReading[] = [];
-  let dataSource: "live" | "archive" = "archive";
+  let dataSource: "live" | "archive" | "modelled" = "archive";
   let station = cell.bigQueryLabel;
   let nearestStationName: string | null = null;
   const errors: string[] = [];
@@ -105,6 +107,25 @@ export async function getForecastForCell(h3CellId: string): Promise<ForecastServ
       history = await queryArchiveHistory(h3CellId, cell.bigQueryLabel);
     } catch (error) {
       errors.push(`archive: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  // 3. Modelled fallback: Google Air Quality hourly history for this spot,
+  //    kept in its own BigQuery table and labelled as modelled end to end.
+  //    Only when no station history is usable; real readings always win.
+  if (dataSource !== "live" && history.length < MIN_HISTORY_ROWS && isModelledHistoryConfigured()) {
+    try {
+      const label = `${MODELLED_SOURCE} · ${nearestStationName ? `near ${nearestStationName}` : cell.label}`;
+      const modelled = await getModelledHistory({ h3CellId, label, lat: cell.lat, lng: cell.lng });
+      const modelledAge = ageHours(modelled);
+      if (modelled.length >= MIN_LIVE_ROWS && modelledAge !== null && modelledAge <= LIVE_HISTORY_MAX_AGE_HOURS) {
+        history = modelled;
+        dataSource = "modelled";
+      } else {
+        errors.push(`modelled: only ${modelled.length} recent hours from the Google Air Quality API`);
+      }
+    } catch (error) {
+      errors.push(`modelled: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
@@ -146,7 +167,10 @@ export async function getForecastForCell(h3CellId: string): Promise<ForecastServ
   // BigQuery ML only has a model for stations in the live table.
   let arima: { points: ArimaPoint[] } | { points: null; reason: string } = {
     points: null,
-    reason: "ARIMA_PLUS runs on live readings; this cell is using archived data.",
+    reason:
+      dataSource === "modelled"
+        ? "ARIMA_PLUS runs on live station readings; this cell is using Google's modelled history."
+        : "ARIMA_PLUS runs on live readings; this cell is using archived data.",
   };
   if (dataSource === "live") {
     try {

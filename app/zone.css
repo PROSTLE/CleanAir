@@ -1,0 +1,165 @@
+/* ==========================================================================
+   Area page (/zone/[cell]), resident fix-check, read-aloud and queue chips.
+   Built only from the existing sv-* tokens and svd-* shapes, so the new
+   surfaces read as part of the same product.
+   ========================================================================== */
+
+.svd-read-aloud {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.svd-read-aloud[aria-pressed="true"] {
+  background: var(--sv-green);
+  border-color: var(--sv-green);
+  color: #fff;
+}
+
+.svd-zone .svd-note code {
+  font-size: 0.72rem;
+  color: var(--sv-ink-soft);
+}
+
+.svd-zone-readings {
+  margin-top: 16px;
+}
+
+.svd-zone-brief h3 {
+  margin: 0 0 8px;
+  font-size: 1.02rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.35;
+}
+
+.svd-zone-brief p {
+  margin: 0 0 10px;
+  font-size: 0.84rem;
+  line-height: 1.65;
+  color: var(--sv-ink-soft);
+}
+
+.svd-zone-advice > div {
+  grid-template-columns: 150px minmax(0, 1fr);
+}
+
+.svd-zone-advice dd {
+  font-weight: 400;
+  line-height: 1.55;
+}
+
+.svd-zone-advice-lead {
+  margin: 12px 0 0;
+  font-size: 0.86rem;
+  line-height: 1.65;
+  color: var(--sv-ink);
+}
+
+.svd-zone-details {
+  margin-top: 14px;
+}
+
+.svd-zone-details summary {
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--sv-green-dark);
+}
+
+.svd-zone-subhead {
+  margin: 22px 0 0;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--sv-ink-soft);
+}
+
+/* 30-day strip: one square per local day, green when something happened. */
+.svd-day-strip {
+  list-style: none;
+  margin: 0 0 16px;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(30, minmax(0, 1fr));
+  gap: 3px;
+}
+
+.svd-day-strip li {
+  aspect-ratio: 1;
+  border-radius: 3px;
+  background: var(--sv-line-soft);
+  border: 1px solid var(--sv-line);
+}
+
+.svd-day-strip li.is-active {
+  background: #e4572e;
+  border-color: #c9481f;
+}
+
+/* Resident fix-check on the track page. */
+.svd-closure {
+  margin-top: 18px;
+}
+
+.svd-closure h2 {
+  margin: 0;
+  font-size: 0.98rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.svd-closure p {
+  margin: 6px 0 0;
+  font-size: 0.82rem;
+  line-height: 1.6;
+  color: var(--sv-ink-soft);
+}
+
+.svd-closure-inline {
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid var(--sv-line);
+}
+
+.svd-closure-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+/* Queue / drawer status chips. */
+.svd-mini-chip.is-warn {
+  background: #fdf4f2;
+  color: #7d2f1d;
+}
+
+.svd-mini-chip.is-alert {
+  background: rgba(228, 87, 46, 0.12);
+  color: #7a3413;
+}
+
+/* "View this area" link inside map pop-ups. */
+.infowindow-zone-link {
+  display: inline-block;
+  margin-top: 6px;
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--sv-green-dark, #2c7d40);
+  text-decoration: none;
+}
+
+.infowindow-zone-link:hover {
+  text-decoration: underline;
+}
+
+@media (max-width: 760px) {
+  .svd-zone-advice > div {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+  }
+
+  .svd-day-strip {
+    grid-template-columns: repeat(15, minmax(0, 1fr));
+  }
+}

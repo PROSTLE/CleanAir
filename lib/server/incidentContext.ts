@@ -142,3 +142,24 @@ export async function getAndStoreIncidentContext(target: Target) {
   await target.ref.update({ operatorContext: context, operatorContextAt: adminServerTimestamp() });
   return context;
 }
+
+/**
+ * Upwind source ranking for any point (the same ranking operators see in the
+ * incident drawer), without the paid Places / Air Quality calls. Used by the
+ * public area page's resident summary.
+ */
+export async function buildAttributionForPoint(lat: number, lng: number, excludeId = "") {
+  const city = resolveCityForPoint(lat, lng);
+  const [wind, regional, incidentCandidates] = await Promise.all([
+    getWindData(lat, lng).catch(() => null),
+    city ? getRegionalFireHotspots(city.id).catch(() => null) : Promise.resolve(null),
+    getActiveIncidentCandidates(excludeId).catch(() => [] as AttributionCandidate[]),
+  ]);
+  return rankUpwindSources({
+    lat,
+    lng,
+    wind: wind ? { fromDeg: wind.windDegrees, speedMs: wind.windSpeedMs } : null,
+    candidates: [...getKnownSources(city?.id), ...incidentCandidates],
+    fires: regional && !regional.error ? regional.fires : [],
+  });
+}

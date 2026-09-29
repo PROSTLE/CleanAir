@@ -34,6 +34,11 @@ service cloud.firestore {
     match /ambientSensorBaselines/{cell} { allow read, write: if false; }
     match /ambientDetectionState/{cell} { allow read, write: if false; }
     match /system/{doc} { allow read, write: if false; }
+    // Area page / fix-check data, served through API routes only.
+    match /incidentEvents/{eventId} { allow read, write: if false; }
+    match /cellStats/{cell} { allow read, write: if false; }
+    match /zoneBriefs/{briefId} { allow read, write: if false; }
+    match /reportTokens/{reportId} { allow read, write: if false; }
 
     match /{document=**} {
       allow read, write: if false;

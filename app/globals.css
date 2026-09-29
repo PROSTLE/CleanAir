@@ -1694,6 +1694,39 @@ a {
   box-shadow: 0 0 0 3px rgba(63, 168, 86, 0.1);
 }
 
+.location-picker-search {
+  position: relative;
+}
+
+.location-picker-suggestions {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 20;
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 12px 28px -18px rgba(16, 26, 21, 0.45);
+}
+
+.location-picker-suggestions li {
+  padding: 9px 10px;
+  border-radius: 8px;
+  color: var(--ink);
+  font-size: 0.88rem;
+  line-height: 1.35;
+  cursor: pointer;
+}
+
+.location-picker-suggestions li:hover,
+.location-picker-suggestions li.is-active {
+  background: var(--surface-tint);
+}
+
 .location-picker-map {
   position: relative;
   overflow: hidden;

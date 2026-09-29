@@ -36,7 +36,8 @@ export type IconName =
   | "list"
   | "arrow-right"
   | "code"
-  | "close";
+  | "close"
+  | "volume";
 
 const PATHS: Record<IconName, React.ReactNode> = {
   satellite: (
@@ -246,6 +247,12 @@ const PATHS: Record<IconName, React.ReactNode> = {
     </>
   ),
   close: <path d="M6.5 6.5l11 11M17.5 6.5l-11 11" />,
+  volume: (
+    <>
+      <path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z" />
+      <path d="M15.5 9a4.2 4.2 0 0 1 0 6M18.2 6.5a8 8 0 0 1 0 11" />
+    </>
+  ),
 };
 
 export default function Icon({

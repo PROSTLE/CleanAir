@@ -11,6 +11,7 @@ import {
   sensorDeltaToScore,
 } from "@/lib/fusionConfidence";
 import { getSeverity } from "@/lib/geo";
+import { recordIncidentEvents, type IncidentEventInput } from "@/lib/server/incidentEvents";
 import type { HazardType, IncidentEvidence, ReportIntegrity } from "@/lib/types";
 import {
   checkStoredSensorSupport,
@@ -79,7 +80,9 @@ function isWithinPromotionWindow(report: StoredReport, nowMs: number, windowHour
  * consistent view — the Admin SDK can read the whole query transactionally.
  */
 export async function promoteCellIfThresholdPassed(h3CellId: string) {
-  await adminDb.runTransaction(async (transaction) => {
+  const lifecycleEvents = await adminDb.runTransaction(async (transaction) => {
+    // Rebuilt on every attempt: Firestore may retry the transaction.
+    const events: IncidentEventInput[] = [];
     const snapshot = await transaction.get(
       adminDb.collection("reports").where("h3CellId", "==", h3CellId),
     );
@@ -254,8 +257,16 @@ export async function promoteCellIfThresholdPassed(h3CellId: string) {
       // reports — which are the only ones left in hazardReports — and it
       // restarts its lifecycle cleanly.
       const incidentPayload: Record<string, unknown> = { ...candidate.incidentPayload };
+      const lifecycleEvent = {
+        incidentId: candidate.incidentRef.id,
+        h3CellId,
+        // Citizen incident ids are `<cell>-<hazard>`.
+        hazardType: candidate.incidentRef.id.slice(h3CellId.length + 1) || null,
+        tier: candidate.promotedValidation.tier ?? null,
+      };
       if (!existing.exists) {
         incidentPayload.createdAt = adminServerTimestamp();
+        events.push({ ...lifecycleEvent, kind: "promoted" });
       } else if (existingData?.status === "resolved") {
         incidentPayload.createdAt = adminServerTimestamp();
         incidentPayload.dispatchStatus = null;
@@ -264,6 +275,9 @@ export async function promoteCellIfThresholdPassed(h3CellId: string) {
         incidentPayload.resolvedAt = null;
         incidentPayload.outcome = null;
         incidentPayload.workOrder = null;
+        // A resident fix-check belongs to the lifecycle that just ended.
+        incidentPayload.closure = null;
+        events.push({ ...lifecycleEvent, kind: "reopened" });
       }
       const reportStatus =
         existingData?.dispatchStatus === "dispatched" && existingData?.status !== "resolved"
@@ -280,5 +294,8 @@ export async function promoteCellIfThresholdPassed(h3CellId: string) {
       }
       transaction.set(candidate.incidentRef, incidentPayload, { merge: true });
     });
+    return events;
   });
+  // After commit, so a failed history write can never roll back a promotion.
+  await recordIncidentEvents(lifecycleEvents);
 }

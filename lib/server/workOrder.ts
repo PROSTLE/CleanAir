@@ -6,6 +6,33 @@ import type { IncidentContext, Target } from "@/lib/server/incidentContext";
 import { generateJson } from "@/lib/server/gemini";
 import { getCity, resolveCityForPoint, type CityConfig } from "@/lib/cities";
 import type { WorkOrder } from "@/lib/types";
+import { getCachedCellPopulation } from "@/lib/server/cellStats";
+import { getCellRecurrence } from "@/lib/server/incidentEvents";
+
+/**
+ * Repeat-hotspot history and residents nearby, when recorded. Missing data is
+ * left out (never guessed), exactly like the other facts.
+ */
+async function areaFacts(h3CellId: unknown) {
+  if (typeof h3CellId !== "string" || !h3CellId) return {};
+  const [recurrence, population] = await Promise.all([
+    getCellRecurrence(h3CellId).catch(() => null),
+    getCachedCellPopulation(h3CellId).catch(() => null),
+  ]);
+  const facts: Record<string, unknown> = {};
+  if (recurrence) {
+    facts.last30Days = {
+      confirmedEpisodes: recurrence.episodes,
+      daysWithCitizenReports: recurrence.reportDays,
+      previousFixDidNotHold: recurrence.fixDidNotHold,
+      chronicHotspot: recurrence.chronic,
+    };
+  }
+  if (population) {
+    facts.residentsWithin1km = { estimate: population.population, source: `WorldPop ${population.year}` };
+  }
+  return facts;
+}
 
 function workOrderSchema(localLanguage: CityConfig["localLanguage"]) {
   const required = ["priority", "subject", "summary", "bodyEn", "actions", "evidenceCited"];
@@ -93,6 +120,7 @@ export async function generateWorkOrder(
   operatorUid: string | null,
 ): Promise<WorkOrder> {
   const { facts, hazardType } = compactFacts(target, context);
+  Object.assign(facts, await areaFacts(target.data.h3CellId));
   const city = resolveCityForPoint(target.lat, target.lng) ?? getCity("delhi");
   const department = city.authorities[hazardType];
   const localLanguage = city.localLanguage;
@@ -108,6 +136,8 @@ field steps appropriate to the hazard. evidenceCited: short phrases naming which
 order (e.g. "3 citizen reports", "PM2.5 +85% vs national standard at <station>"). Priority: "immediate" for an
 active fire or sensitive sites nearby with high confidence, "within_24h" for confirmed hotspots,
 otherwise "routine".
+If last30Days.chronicHotspot is true, say the spot keeps recurring and include one action aimed at
+stopping it at the source (not only another clean-up).
 
 FACTS (JSON):
 ${JSON.stringify(facts, null, 2)}`;

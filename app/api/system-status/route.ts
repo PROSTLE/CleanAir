@@ -1,5 +1,3 @@
-import { existsSync } from "node:fs";
-import path from "node:path";
 import { NextResponse } from "next/server";
 
 /**
@@ -20,12 +18,6 @@ function configuredAny(...vars: string[]): boolean {
   return vars.some((name) => Boolean(process.env[name]?.trim()));
 }
 
-// Runtime-only check; the ignore comment stops Turbopack from tracing the
-// whole project into this route's bundle.
-function fileExists(...segments: string[]): boolean {
-  return existsSync(path.join(/*turbopackIgnore: true*/ process.cwd(), ...segments));
-}
-
 export async function GET() {
   return NextResponse.json({
     checkedAt: new Date().toISOString(),
@@ -36,12 +28,11 @@ export async function GET() {
       waqi: configured("WAQI_API_TOKEN"),
       // Open-Meteo needs no key.
       weather: true,
-      // BigQuery authenticates with explicit credentials when present,
-      // otherwise Application Default Credentials; the project ID is required.
+      // BigQuery authenticates as the app's service account (or explicit
+      // BIGQUERY_* credentials); the project ID is required.
       bigQuery: configured("BIGQUERY_PROJECT_ID"),
-      earthEngine:
-        configured("EARTH_ENGINE_SERVICE_ACCOUNT_KEY") ||
-        fileExists("credentials", "earth-engine-key.json"),
+      // Earth Engine uses the app's service account unless a dedicated key is set.
+      earthEngine: configuredAny("EARTH_ENGINE_SERVICE_ACCOUNT_KEY", "FIREBASE_SERVICE_ACCOUNT_KEY"),
       googleAirQuality: configured("GOOGLE_AIR_QUALITY_API_KEY"),
       places: configured("GOOGLE_PLACES_API_KEY"),
       speechToText: configured("GOOGLE_SPEECH_API_KEY"),

@@ -88,6 +88,23 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
       return res.end(twiml.toString());
     }
 
+    // Fix-check replies to a "resolved" message (FIXED / STILL). Only read
+    // outside a report conversation, where free text means something else.
+    const closureAnswer = parseClosureReply(text);
+    if (closureAnswer && (session.step === "start" || session.step === "awaiting_another_complaint")) {
+      const relayed = await relayClosureAnswer(userPhone, closureAnswer);
+      if (relayed && relayed.updated > 0) {
+        twiml.message(
+          closureAnswer === "fixed"
+            ? "✅ Thank you for confirming. / पुष्टि के लिए धन्यवाद।"
+            : "🔁 Thank you. The hotspot has been reopened for the municipal team. / धन्यवाद, इसे नगर टीम के लिए फिर से खोल दिया गया है।",
+        );
+        res.writeHead(200, { "Content-Type": "text/xml" });
+        return res.end(twiml.toString());
+      }
+      // Nothing waiting for an answer from this number: carry on as usual.
+    }
+
     switch (session.step) {
       case "start":
         reply = buildLangMenu();
@@ -206,6 +223,31 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
     return res.end(twiml.toString());
   }
 });
+
+function parseClosureReply(text) {
+  const word = (text || "").trim().toLowerCase();
+  if (word === "fixed") return "fixed";
+  if (word === "still") return "not_fixed";
+  return null;
+}
+
+// Hands a FIXED / STILL reply to the web app, which owns the fix-check logic
+// (lib/server/closure.ts). Needs the same WHATSAPP_CLOSURE_SECRET on both sides.
+async function relayClosureAnswer(phone, answer) {
+  const secret = process.env.WHATSAPP_CLOSURE_SECRET;
+  if (!secret || !APP_URL) return null;
+  try {
+    const response = await axios.post(
+      `${APP_URL}/api/closure/whatsapp`,
+      { phone, answer },
+      { headers: { Authorization: `Bearer ${secret}` }, timeout: 15000 },
+    );
+    return response.data;
+  } catch (err) {
+    console.error("Fix-check relay failed:", err.response ? err.response.status : err.message);
+    return null;
+  }
+}
 
 async function uploadToImgBB(mediaUrl) {
   try {

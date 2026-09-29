@@ -4,6 +4,7 @@ import { BigQuery } from "@google-cloud/bigquery";
 import type { StationReading } from "@/lib/stations";
 import type { SensorReading } from "@/lib/forecastEngine";
 import { getH3CellId } from "@/lib/geo";
+import { getServiceAccountKey } from "@/lib/server/serviceAccount";
 import { parseSensorTimestamp } from "@/lib/supportEvidence";
 
 // Tables live in one dataset; see scripts/setup-bigquery.sql for the DDL.
@@ -41,14 +42,18 @@ function getClient() {
   if (!project) throw new Error("BIGQUERY_PROJECT_ID is not set.");
   if (client) return client;
 
+  // Explicit BIGQUERY_* credentials win; otherwise the app's service account
+  // (FIREBASE_SERVICE_ACCOUNT_KEY); otherwise Application Default Credentials.
   const clientEmail = process.env.BIGQUERY_CLIENT_EMAIL;
   const privateKey = process.env.BIGQUERY_PRIVATE_KEY?.replace(/\\n/g, "\n");
-  client = new BigQuery(
+  const appAccount = getServiceAccountKey();
+  const credentials =
     clientEmail && privateKey
-      ? { projectId: project, credentials: { client_email: clientEmail, private_key: privateKey } }
-      : // Application Default Credentials (runtime service account).
-        { projectId: project },
-  );
+      ? { client_email: clientEmail, private_key: privateKey }
+      : appAccount
+        ? { client_email: appAccount.client_email, private_key: appAccount.private_key }
+        : null;
+  client = new BigQuery(credentials ? { projectId: project, credentials } : { projectId: project });
   return client;
 }
 
@@ -233,4 +238,107 @@ export async function arimaForecast(stationLabel: string, horizonHours = 24): Pr
     lower: Math.max(0, Math.round(row.lower)),
     upper: Math.max(0, Math.round(row.upper)),
   }));
+}
+
+// ─── Modelled history (Google Air Quality API) ───────────────────────────────
+// A separate table from the station readings, so modelled values can never
+// mix into station history or the ARIMA training data. Rows are hourly PM
+// estimates for a point (the H3 cell of a forecast zone), from
+// lib/server/googleAirQuality.ts getAirQualityHistory.
+export const MODELLED_SOURCE = "Google Air Quality API (modelled, 500 m)";
+
+export function googleHistoryTable() {
+  return process.env.BIGQUERY_GOOGLE_HISTORY_TABLE ?? `${datasetPrefix()}.google_aq_history`;
+}
+
+let googleTableReady: Promise<void> | null = null;
+
+/** Creates the modelled-history table (same dataset and location as the live table) if it's missing. */
+export function ensureGoogleHistoryTable() {
+  if (!googleTableReady) {
+    googleTableReady = (async () => {
+      const { dataset, table } = splitTableId(googleHistoryTable());
+      const ref = getClient().dataset(dataset).table(table);
+      const [exists] = await ref.exists();
+      if (exists) return;
+      await getClient()
+        .dataset(dataset)
+        .createTable(table, {
+          schema: {
+            fields: [
+              { name: "sampledAt", type: "TIMESTAMP", mode: "REQUIRED" },
+              { name: "ingestedAt", type: "TIMESTAMP" },
+              { name: "h3CellId", type: "STRING", mode: "REQUIRED" },
+              { name: "location_label", type: "STRING" },
+              { name: "location_lat", type: "FLOAT64" },
+              { name: "location_lng", type: "FLOAT64" },
+              { name: "sensor_pm25", type: "FLOAT64" },
+              { name: "sensor_pm10", type: "FLOAT64" },
+              { name: "source", type: "STRING" },
+            ],
+          },
+          timePartitioning: { type: "DAY", field: "sampledAt", expirationMs: String(400 * 24 * 3_600_000) },
+          clustering: { fields: ["h3CellId"] },
+        });
+    })().catch((error) => {
+      googleTableReady = null;
+      throw error;
+    });
+  }
+  return googleTableReady;
+}
+
+export async function insertGoogleHistory(
+  point: { h3CellId: string; label: string; lat: number; lng: number },
+  hours: Array<{ time: string; pm25: number | null; pm10: number | null }>,
+) {
+  const rows = hours
+    .filter((hour) => hour.pm25 !== null)
+    .map((hour) => ({
+      insertId: `${point.h3CellId}|${hour.time}`,
+      json: {
+        sampledAt: hour.time,
+        ingestedAt: new Date().toISOString(),
+        h3CellId: point.h3CellId,
+        location_label: point.label,
+        location_lat: point.lat,
+        location_lng: point.lng,
+        sensor_pm25: hour.pm25,
+        sensor_pm10: hour.pm10,
+        source: MODELLED_SOURCE,
+      },
+    }));
+  if (rows.length === 0) return { inserted: 0 };
+  await ensureGoogleHistoryTable();
+  const { dataset, table } = splitTableId(googleHistoryTable());
+  await getClient().dataset(dataset).table(table).insert(rows, { raw: true, skipInvalidRows: true });
+  return { inserted: rows.length };
+}
+
+/** Hourly modelled history for one cell, one row per hour (latest ingest wins). */
+export async function queryGoogleHistory(h3CellId: string, hours = 72): Promise<SensorReading[]> {
+  const [rows] = await getClient().query({
+    query: `
+      SELECT
+        FORMAT_TIMESTAMP('%Y-%m-%dT%H:00:00Z', hour_ts) AS sampledAt,
+        latest.* EXCEPT (sampledAt)
+      FROM (
+        SELECT
+          TIMESTAMP_TRUNC(sampledAt, HOUR) AS hour_ts,
+          ARRAY_AGG(STRUCT(
+            sampledAt, h3CellId, location_label, location_lat, location_lng, sensor_pm25, sensor_pm10,
+            CAST(NULL AS FLOAT64) AS sensor_no2, CAST(NULL AS FLOAT64) AS sensor_so2,
+            CAST(NULL AS FLOAT64) AS sensor_co, CAST(NULL AS FLOAT64) AS sensor_nh3,
+            CAST(NULL AS FLOAT64) AS sensor_ozone
+          ) ORDER BY ingestedAt DESC LIMIT 1)[OFFSET(0)] AS latest
+        FROM \`${googleHistoryTable()}\`
+        WHERE h3CellId = @h3CellId
+          AND sampledAt >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL @hours HOUR)
+          AND sensor_pm25 IS NOT NULL
+        GROUP BY hour_ts
+      )
+      ORDER BY hour_ts ASC`,
+    params: { h3CellId, hours },
+  });
+  return rows as SensorReading[];
 }

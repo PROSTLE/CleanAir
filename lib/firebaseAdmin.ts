@@ -4,28 +4,14 @@ import { applicationDefault, cert, getApps, initializeApp, type ServiceAccount }
 import { getAppCheck } from "firebase-admin/app-check";
 import { getAuth } from "firebase-admin/auth";
 import { FieldValue, getFirestore } from "firebase-admin/firestore";
+import { getServiceAccountKey } from "@/lib/server/serviceAccount";
 
 const DEFAULT_FIREBASE_PROJECT_ID = "cleanair-clear-streets";
 
 function getServiceAccountFromEnv(): ServiceAccount | null {
-  const rawServiceAccount = process.env.FIREBASE_SERVICE_ACCOUNT_KEY;
-  if (!rawServiceAccount) return null;
-
-  const decodedServiceAccount = rawServiceAccount.trim().startsWith("{")
-    ? rawServiceAccount
-    : Buffer.from(rawServiceAccount, "base64").toString("utf8");
-
-  const serviceAccount = JSON.parse(decodedServiceAccount) as ServiceAccount & {
-    client_email?: string;
-    private_key?: string;
-    project_id?: string;
-  };
-
-  return {
-    clientEmail: serviceAccount.clientEmail ?? serviceAccount.client_email,
-    privateKey: serviceAccount.privateKey ?? serviceAccount.private_key,
-    projectId: serviceAccount.projectId ?? serviceAccount.project_id,
-  };
+  const key = getServiceAccountKey();
+  if (!key) return null;
+  return { clientEmail: key.client_email, privateKey: key.private_key, projectId: key.project_id ?? undefined };
 }
 
 const firebaseServiceAccount = getServiceAccountFromEnv();

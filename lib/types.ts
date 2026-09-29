@@ -3,6 +3,8 @@
 // to tell a fire apart from general smog/haze — see lib/ambientScan.ts.
 // Citizen reports always resolve to a specific "fire" or "smog" once Gemini
 // has actually looked at a photo (lib/firestoreReports.ts).
+import type { Closure } from "@/lib/closure";
+
 export type HazardType = "fire" | "smog" | "dust" | "industrial" | "particulate";
 
 export type Severity = "low" | "medium" | "critical";
@@ -157,6 +159,10 @@ export interface Incident {
   integrity?: ReportIntegrity;
   workOrder?: WorkOrder;
   channel?: "web" | "whatsapp";
+  /** Resident fix-check opened when an operator resolves (lib/closure.ts). */
+  closure?: Closure | null;
+  /** "resident" when a reporter said "still there" and it was reopened. */
+  reopenedBy?: string | null;
   // Ambient-scan-only fields — set when source is sensor/satellite and no
   // citizen report exists. Lists every hazard category whose sensor/satellite
   // threshold was crossed (e.g. ["dust","industrial"]) so the map can show

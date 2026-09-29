@@ -2,8 +2,10 @@ import "server-only";
 
 import { adminDb, adminServerTimestamp } from "@/lib/firebaseAdmin";
 import { getRecommendedAction } from "@/components/command/commandData";
+import { openClosure } from "@/lib/closure";
 import { resolveIncidentHazardType } from "@/lib/firestoreReports";
 import type { Target } from "@/lib/server/incidentContext";
+import { recordIncidentEvent } from "@/lib/server/incidentEvents";
 import { HttpError, type Operator } from "@/lib/server/http";
 import { notifyReporters } from "@/lib/server/notify";
 
@@ -55,6 +57,13 @@ export async function applyOperatorAction(target: Target, action: OperatorAction
       updatedAt: adminServerTimestamp(),
     };
     reportUpdate = { status: "resolved", outcome, resolvedAt: adminServerTimestamp() };
+    // A confirmed fix asks the reporters whether it is really gone (see
+    // lib/server/closure.ts). Ambient incidents have no reporters to ask.
+    if (action === "resolve" && linkedReportIds.length > 0) {
+      const now = new Date();
+      update.closure = openClosure(now, target.collection === "incidents");
+      reportUpdate.closure = openClosure(now, false);
+    }
   }
 
   const batch = adminDb.batch();
@@ -65,6 +74,14 @@ export async function applyOperatorAction(target: Target, action: OperatorAction
     }
   }
   await batch.commit();
+  await recordIncidentEvent({
+    incidentId: target.id,
+    h3CellId: target.data.h3CellId,
+    hazardType,
+    kind: action === "dispatch" ? "dispatched" : action === "resolve" ? "resolved" : "false_positive",
+    tier: target.data.validation?.tier ?? null,
+    by: operator.uid,
+  });
 
   // A false positive isn't something to announce to the reporter.
   const notification =

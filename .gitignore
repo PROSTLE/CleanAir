@@ -52,3 +52,7 @@ next-env.d.ts
 
 # classifier evaluation photos (keep the README)
 /eval/photos/*
+
+# firebase CLI
+firebase-debug.log
+firebase-debug.*.log

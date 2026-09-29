@@ -6,6 +6,7 @@ import type { SatelliteDataResult } from "@/lib/earthEngineSatellite";
 import { getSatelliteDataForPoint } from "@/lib/earthEngineSatellite";
 import { computeFusionConfidence, satelliteWeightToScore, sensorDeltaToScore } from "@/lib/fusionConfidence";
 import { getH3CellId, getSeverity } from "@/lib/geo";
+import { recordIncidentEvent } from "@/lib/server/incidentEvents";
 import {
   fetchCityStationReadings,
   getNearestStationReading,
@@ -1014,6 +1015,7 @@ export async function scanCityAmbientHotspots(city: CityConfig): Promise<Ambient
         outcome: null,
         workOrder: null,
       });
+      await recordIncidentEvent({ incidentId: incidentRef.id, h3CellId, hazardType, kind: "reopened", tier });
     } else if (existingSnap.exists) {
       // Doc already exists — update in place, preserving the original createdAt
       // so the "Age" displayed in the Command Center reflects when pollution
@@ -1022,6 +1024,7 @@ export async function scanCityAmbientHotspots(city: CityConfig): Promise<Ambient
     } else {
       // Brand new detection — set createdAt for the first and only time.
       await incidentRef.set({ ...sharedPayload, createdAt: adminServerTimestamp() });
+      await recordIncidentEvent({ incidentId: incidentRef.id, h3CellId, hazardType, kind: "promoted", tier });
     }
 
     promoted.push({ cell: target.label, hazardType, tier, h3CellId });

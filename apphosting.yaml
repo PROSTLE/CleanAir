@@ -1,0 +1,116 @@
+# Firebase App Hosting configuration for the VayuSetu backend.
+# Keys live in Cloud Secret Manager (created with `firebase apphosting:secrets:set`);
+# only public browser config and non-secret IDs are written here.
+# Firebase Admin, Earth Engine and BigQuery all authenticate with
+# FIREBASE_SERVICE_ACCOUNT_KEY (firebase-adminsdk-fbsvc@cleanair-clear-streets).
+
+runConfig:
+  minInstances: 0
+  maxInstances: 4
+
+env:
+  # Browser config: needed while Next.js builds and at runtime.
+  - variable: NEXT_PUBLIC_GOOGLE_MAPS_API_KEY
+    value: "AIzaSyDLGEVNaWphNxW7-TALh23Tk7f36_NBu0k"
+    availability:
+      - BUILD
+      - RUNTIME
+  - variable: NEXT_PUBLIC_FIREBASE_API_KEY
+    value: "AIzaSyC-O87tilg_2XYrshXaSEViwWHs80GvbaU"
+    availability:
+      - BUILD
+      - RUNTIME
+  - variable: NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN
+    value: "cleanair-clear-streets.firebaseapp.com"
+    availability:
+      - BUILD
+      - RUNTIME
+  - variable: NEXT_PUBLIC_FIREBASE_PROJECT_ID
+    value: "cleanair-clear-streets"
+    availability:
+      - BUILD
+      - RUNTIME
+  - variable: NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET
+    value: "cleanair-clear-streets.firebasestorage.app"
+    availability:
+      - BUILD
+      - RUNTIME
+  - variable: NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID
+    value: "618032071030"
+    availability:
+      - BUILD
+      - RUNTIME
+  - variable: NEXT_PUBLIC_FIREBASE_APP_ID
+    value: "1:618032071030:web:3fa4c2c7bb25f32d367a57"
+    availability:
+      - BUILD
+      - RUNTIME
+  - variable: NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID
+    value: "G-5NXSN0P0BZ"
+    availability:
+      - BUILD
+      - RUNTIME
+
+  # Server settings (not secret).
+  - variable: OPERATOR_EMAILS
+    value: "operator@cleanair.gov"
+    availability:
+      - RUNTIME
+  - variable: BIGQUERY_PROJECT_ID
+    value: "cleanair-clear-streets"
+    availability:
+      - RUNTIME
+  - variable: EARTH_ENGINE_PROJECT_ID
+    value: "cleanair-clear-streets"
+    availability:
+      - RUNTIME
+
+  # Keys, from Cloud Secret Manager.
+  - variable: FIREBASE_SERVICE_ACCOUNT_KEY
+    secret: FIREBASE_SERVICE_ACCOUNT_KEY
+    availability:
+      - RUNTIME
+  - variable: GEMINI_API_KEY
+    secret: GEMINI_API_KEY
+    availability:
+      - RUNTIME
+  - variable: CPCB_API_KEY
+    secret: CPCB_API_KEY
+    availability:
+      - RUNTIME
+  - variable: WAQI_API_TOKEN
+    secret: WAQI_API_TOKEN
+    availability:
+      - RUNTIME
+  - variable: IMGBB_API_KEY
+    secret: IMGBB_API_KEY
+    availability:
+      - RUNTIME
+  - variable: GOOGLE_SPEECH_API_KEY
+    secret: GOOGLE_SPEECH_API_KEY
+    availability:
+      - RUNTIME
+  - variable: GOOGLE_AIR_QUALITY_API_KEY
+    secret: GOOGLE_AIR_QUALITY_API_KEY
+    availability:
+      - RUNTIME
+  - variable: GOOGLE_PLACES_API_KEY
+    secret: GOOGLE_PLACES_API_KEY
+    availability:
+      - RUNTIME
+  - variable: CRON_SECRET
+    secret: CRON_SECRET
+    availability:
+      - RUNTIME
+  - variable: TWILIO_ACCOUNT_SID
+    secret: TWILIO_ACCOUNT_SID
+    availability:
+      - RUNTIME
+  - variable: TWILIO_AUTH_TOKEN
+    secret: TWILIO_AUTH_TOKEN
+    availability:
+      - RUNTIME
+  - variable: TWILIO_WHATSAPP_FROM
+    secret: TWILIO_WHATSAPP_FROM
+    availability:
+      - RUNTIME

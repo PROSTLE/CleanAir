@@ -10,6 +10,75 @@ import { compassLabel } from "@/lib/geo";
 import { useT } from "@/lib/languageContext";
 import { TIER_LABELS } from "@/lib/supportEvidence";
 import type { Incident, WorkOrder } from "@/lib/types";
+import Link from "next/link";
+import { closureDisplayState } from "@/lib/closure";
+import { chronicReasonText, type RecurrenceSummary } from "@/lib/recurrence";
+import { getSlaStatusNow } from "@/lib/sla";
+
+/** 30-day history of the incident's cell, plus a link to its public area page. */
+function AreaHistory({ cell }: { cell: string }) {
+  const t = useT();
+  const [result, setResult] = useState<{ cell: string; data: RecurrenceSummary | null; error: string | null } | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/zones/recurrence?cells=${cell}`)
+      .then(async (response) => {
+        const payload = (await response.json().catch(() => null)) as
+          | { cells?: Record<string, RecurrenceSummary | { error: string }>; error?: string }
+          | null;
+        const entry = payload?.cells?.[cell];
+        if (!response.ok || !entry) throw new Error(payload?.error ?? `Request failed (${response.status}).`);
+        if ("error" in entry) throw new Error(entry.error);
+        if (!cancelled) setResult({ cell, data: entry, error: null });
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) setResult({ cell, data: null, error: error instanceof Error ? error.message : String(error) });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [cell]);
+
+  const current = result?.cell === cell ? result : null;
+  const history = current?.data ?? null;
+
+  return (
+    <section className="svd-drawer-section">
+      <div className="svd-drawer-section-head">
+        <h3 className="vs-title">
+          <Icon name="clock" size={14} />
+          {t("zone_history_title")}
+        </h3>
+        <Link href={`/zone/${cell}`} className="svd-action">
+          {t("zone_link_open")}
+        </Link>
+      </div>
+      {!current && <p className="svd-muted-note">{t("drawer_loading")}</p>}
+      {current?.error && <p className="svd-muted-note">{current.error}</p>}
+      {history && (
+        <>
+          {history.chronic && (
+            <p className="svd-callout">
+              {t("zone_chronic")} {history.chronicReasons.map((reason) => chronicReasonText(reason, t)).join(" · ")}
+            </p>
+          )}
+          <dl className="svd-facts">
+            <div>
+              <dt>{t("zone_history_episodes")}</dt>
+              <dd>{history.episodes}</dd>
+            </div>
+            <div>
+              <dt>{t("zone_history_report_days")}</dt>
+              <dd>{history.reportDays}</dd>
+            </div>
+          </dl>
+          {!history.trackingSinceMs && <p className="svd-muted-note">{t("zone_history_no_events")}</p>}
+        </>
+      )}
+    </section>
+  );
+}
 
 export type DrawerTarget = { incident: Incident; collection: "incidents" | "reports" };
 
@@ -171,6 +240,12 @@ export default function IncidentDrawer({
     : [];
   const isResolved = incident.status === "resolved";
   const isDispatched = incident.dispatchStatus === "dispatched";
+  const closureState = closureDisplayState(incident.closure);
+  const sla = getSlaStatusNow({
+    priority: workOrder?.priority,
+    openedAtMs: Date.parse(incident.timestamp),
+    resolved: isResolved,
+  });
 
   return (
     <div className="svd-drawer-backdrop" role="presentation" onClick={onClose}>
@@ -196,6 +271,9 @@ export default function IncidentDrawer({
               <span className="svd-chip">{t(`status_${incident.status}`) || incident.status}</span>
               {isDispatched && <span className="svd-chip is-ok">{t("dash_dispatched")}</span>}
               {incident.channel === "whatsapp" && <span className="svd-chip">WhatsApp</span>}
+              {closureState === "disputed" && <span className="svd-chip is-warn">{t("closure_chip_disputed")}</span>}
+              {closureState === "confirmed" && <span className="svd-chip is-ok">{t("closure_chip_confirmed")}</span>}
+              {closureState === "awaiting" && <span className="svd-chip">{t("closure_chip_awaiting")}</span>}
             </div>
           </div>
           <button type="button" className="svd-icon-btn" aria-label={t("common_close")} onClick={onClose}>
@@ -318,6 +396,8 @@ export default function IncidentDrawer({
             </>
           )}
         </section>
+
+        {incident.h3CellId && <AreaHistory cell={incident.h3CellId} />}
 
         {/* ── Field context ────────────────────────────────────────────── */}
         <section className="svd-drawer-section">
@@ -488,6 +568,12 @@ export default function IncidentDrawer({
                   {t(`priority_${workOrder.priority}`)}
                 </span>
                 <span>{workOrder.department}</span>
+                {sla && (
+                  <span className={`svd-chip ${sla.overdueHours ? "is-warn" : ""}`}>
+                    {t("track_city_target").replace("{hours}", String(sla.targetHours))}
+                    {sla.overdueHours ? ` · ${t("sla_overdue").replace("{hours}", String(sla.overdueHours))}` : ""}
+                  </span>
+                )}
               </div>
               <h4>{workOrder.subject}</h4>
               <p>{workOrder.summary}</p>

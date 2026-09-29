@@ -4,10 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   getGoogleMaps,
   loadGoogleMaps,
-  type GoogleMapGeocoder,
   type GoogleMapInstance,
   type GoogleMapMarker,
-  type GooglePlaceAutocomplete,
 } from "@/lib/googleMaps";
 import type { CityConfig } from "@/lib/cities";
 import { useCity } from "@/lib/cityContext";
@@ -25,7 +23,11 @@ interface ReportLocationPickerProps {
   value: ReportLocationValue;
 }
 
-type PickerStatus = "idle" | "loading" | "ready" | "error";
+type PickerStatus = "idle" | "ready" | "error";
+type Suggestion = { placeId: string; text: string };
+
+const SEARCH_DEBOUNCE_MS = 250;
+const MAPS_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
 
 const pickerMapStyles = [
   {
@@ -65,33 +67,28 @@ function toPosition(location: ReportLocationValue, city: CityConfig) {
   return city.center;
 }
 
-// Suggestions are limited to the city's country and biased to its outline.
-function citySearchScope(city: CityConfig) {
-  const { minLat, maxLat, minLng, maxLng } = city.bounds;
-  return {
-    country: city.countryCode,
-    bounds: { north: maxLat, south: minLat, east: maxLng, west: minLng },
-  };
-}
-
 function formatCoordinate(value: number) {
   return value.toFixed(6);
 }
 
-function reverseGeocode(
-  geocoder: GoogleMapGeocoder,
-  position: { lat: number; lng: number },
-) {
-  return new Promise<string>((resolve) => {
-    geocoder.geocode({ location: position }, (results, status) => {
-      if (status === "OK" && results?.[0]?.formatted_address) {
-        resolve(results[0].formatted_address);
-        return;
-      }
+function newSessionToken() {
+  return typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
 
-      resolve(`${formatCoordinate(position.lat)}, ${formatCoordinate(position.lng)}`);
-    });
-  });
+// Search and reverse geocoding run through /api/places (Places API (New) on
+// the server). Google retired the browser Autocomplete widget for new
+// projects, and the server route keeps that key out of the page.
+async function reverseGeocode(position: { lat: number; lng: number }) {
+  const fallback = `${formatCoordinate(position.lat)}, ${formatCoordinate(position.lng)}`;
+  try {
+    const response = await fetch(`/api/places?lat=${position.lat}&lng=${position.lng}`);
+    const data = (await response.json()) as { label?: string | null };
+    return response.ok && data.label ? data.label : fallback;
+  } catch {
+    return fallback;
+  }
 }
 
 export default function ReportLocationPicker({
@@ -101,17 +98,20 @@ export default function ReportLocationPicker({
   const t = useT();
   const { city } = useCity();
   const cityRef = useRef(city);
-  const inputRef = useRef<HTMLInputElement | null>(null);
   const mapNodeRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<GoogleMapInstance | null>(null);
   const markerRef = useRef<GoogleMapMarker | null>(null);
-  const geocoderRef = useRef<GoogleMapGeocoder | null>(null);
-  const autocompleteRef = useRef<GooglePlaceAutocomplete | null>(null);
   const onChangeRef = useRef(onChange);
   const valueRef = useRef(value);
+  const sessionRef = useRef<string>(newSessionToken());
+  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const searchSeqRef = useRef(0);
   const [mapEnabled, setMapEnabled] = useState(false);
-  const [status, setStatus] = useState<PickerStatus>("idle");
+  const [mapStatus, setMapStatus] = useState<PickerStatus>("idle");
   const [helperText, setHelperText] = useState("");
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  const [activeIndex, setActiveIndex] = useState(-1);
+  const status: PickerStatus = MAPS_KEY ? mapStatus : "error";
 
   useEffect(() => {
     onChangeRef.current = onChange;
@@ -119,16 +119,17 @@ export default function ReportLocationPicker({
     cityRef.current = city;
   }, [city, onChange, value]);
 
-  // Switching city re-scopes search and recentres an open map picker.
+  // Switching city recentres an open map picker that has no pin yet.
   useEffect(() => {
-    const scope = citySearchScope(city);
-    autocompleteRef.current?.setComponentRestrictions({ country: scope.country });
-    autocompleteRef.current?.setBounds(scope.bounds);
     if (!Number.isFinite(toCoordinate(valueRef.current.lat))) {
       mapRef.current?.panTo(city.center);
       markerRef.current?.setPosition?.(city.center);
     }
   }, [city]);
+
+  useEffect(() => () => {
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+  }, []);
 
   const commitLocation = useCallback((
     position: { lat: number; lng: number },
@@ -151,15 +152,10 @@ export default function ReportLocationPicker({
   const commitLocationWithReverseGeocode = useCallback(async (
     position: { lat: number; lng: number },
   ) => {
-    const geocoder = geocoderRef.current;
-    const label = geocoder
-      ? await reverseGeocode(geocoder, position)
-      : `${formatCoordinate(position.lat)}, ${formatCoordinate(position.lng)}`;
-
-    commitLocation(position, label);
+    commitLocation(position, await reverseGeocode(position));
   }, [commitLocation]);
 
-  async function handleDetectLocation() {
+  function handleDetectLocation() {
     if (!navigator.geolocation) {
       setHelperText("Location detection is not available in this browser.");
       return;
@@ -184,87 +180,86 @@ export default function ReportLocationPicker({
     );
   }
 
-  useEffect(() => {
-    const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
-    if (!apiKey || !inputRef.current) {
-      setStatus(apiKey ? "idle" : "error");
+  function handleInput(text: string) {
+    // Free text alone has no coordinates. Clear the previous pin so a typed
+    // "Rohini" can't be saved at the old location's lat/lng; picking a
+    // suggestion, detecting, or dropping a pin sets them.
+    onChange({ label: text, lat: "", lng: "" });
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+    const query = text.trim();
+    if (query.length < 2) {
+      setSuggestions([]);
       return;
     }
-
-    let cancelled = false;
-
-    loadGoogleMaps(apiKey, { places: true })
-      .then(() => {
-        if (cancelled || !inputRef.current) return;
-
-        const google = getGoogleMaps();
-        const maps = google?.maps;
-        if (!maps?.places) throw new Error("Google Places library is not available.");
-
-        if (!autocompleteRef.current) {
-          const geocoder = new maps.Geocoder();
-          const scope = citySearchScope(cityRef.current);
-          const autocomplete = new maps.places.Autocomplete(inputRef.current, {
-            componentRestrictions: { country: scope.country },
-            bounds: scope.bounds,
-            fields: ["formatted_address", "geometry", "name"],
-          });
-
-          autocomplete.addListener("place_changed", () => {
-            const place = autocomplete.getPlace();
-            const placePosition = place.geometry?.location;
-            if (!placePosition) {
-              setHelperText("Select a place from the dropdown so coordinates can update.");
-              return;
-            }
-
-            commitLocation(
-              {
-                lat: placePosition.lat(),
-                lng: placePosition.lng(),
-              },
-              place.formatted_address ?? place.name ?? valueRef.current.label,
-            );
-          });
-
-          geocoderRef.current = geocoder;
-          autocompleteRef.current = autocomplete;
+    const seq = ++searchSeqRef.current;
+    searchTimerRef.current = setTimeout(async () => {
+      try {
+        const params = new URLSearchParams({ q: query, city: cityRef.current.id, session: sessionRef.current });
+        const response = await fetch(`/api/places?${params}`);
+        const data = (await response.json()) as { suggestions?: Suggestion[]; error?: string };
+        if (seq !== searchSeqRef.current) return; // a newer keystroke won
+        if (!response.ok) {
+          setSuggestions([]);
+          setHelperText("Place search is unavailable. Use GPS or the map picker.");
+          return;
         }
-
-        setStatus("ready");
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setStatus("error");
-          setHelperText("Map picker unavailable. Check the Maps JavaScript API key.");
-        }
-      });
-
-    return () => {
-      cancelled = true;
-      const maps = getGoogleMaps()?.maps;
-      if (autocompleteRef.current) {
-        maps?.event.clearInstanceListeners(autocompleteRef.current);
-        autocompleteRef.current = null;
+        setSuggestions(data.suggestions ?? []);
+        setActiveIndex(-1);
+        if (!data.suggestions?.length) setHelperText("No matching places in this city. Try another name or drop a pin.");
+      } catch {
+        if (seq === searchSeqRef.current) setSuggestions([]);
       }
-    };
-  }, [commitLocation]);
+    }, SEARCH_DEBOUNCE_MS);
+  }
+
+  async function selectSuggestion(suggestion: Suggestion) {
+    setSuggestions([]);
+    setActiveIndex(-1);
+    searchSeqRef.current += 1;
+    setHelperText("Locating place...");
+    try {
+      const params = new URLSearchParams({ placeId: suggestion.placeId, session: sessionRef.current });
+      const response = await fetch(`/api/places?${params}`);
+      const data = (await response.json()) as { lat?: number; lng?: number; label?: string; error?: string };
+      if (!response.ok || typeof data.lat !== "number" || typeof data.lng !== "number") {
+        throw new Error(data.error ?? "No location for that place.");
+      }
+      commitLocation({ lat: data.lat, lng: data.lng }, data.label || suggestion.text);
+    } catch {
+      setHelperText("Could not locate that place. Try another result or drop a pin.");
+    } finally {
+      // A new search session starts after every selection.
+      sessionRef.current = newSessionToken();
+    }
+  }
+
+  function handleKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
+    if (suggestions.length === 0) return;
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setActiveIndex((index) => (index + 1) % suggestions.length);
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setActiveIndex((index) => (index <= 0 ? suggestions.length - 1 : index - 1));
+    } else if (event.key === "Enter" && activeIndex >= 0) {
+      event.preventDefault();
+      void selectSuggestion(suggestions[activeIndex]);
+    } else if (event.key === "Escape") {
+      setSuggestions([]);
+    }
+  }
 
   useEffect(() => {
-    if (!mapEnabled || !mapNodeRef.current) return;
-
-    const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
-    if (!apiKey) return;
+    if (!mapEnabled || !mapNodeRef.current || !MAPS_KEY) return;
 
     let cancelled = false;
 
-    loadGoogleMaps(apiKey, { places: true })
+    loadGoogleMaps(MAPS_KEY)
       .then(() => {
         if (cancelled || !mapNodeRef.current) return;
 
-        const google = getGoogleMaps();
-        const maps = google?.maps;
-        if (!maps) return;
+        const maps = getGoogleMaps()?.maps;
+        if (!maps) throw new Error("Google Maps did not load.");
 
         const startPosition = toPosition(valueRef.current, cityRef.current);
         const map = new maps.Map(mapNodeRef.current, {
@@ -279,7 +274,7 @@ export default function ReportLocationPicker({
           zoom: 14,
           zoomControl: true,
         });
-        
+
         const marker = new maps.Marker({
           draggable: true,
           map,
@@ -299,9 +294,13 @@ export default function ReportLocationPicker({
 
         mapRef.current = map;
         markerRef.current = marker;
+        setMapStatus("ready");
       })
       .catch(() => {
-        // Handled by the main effect
+        if (!cancelled) {
+          setMapStatus("error");
+          setHelperText("Map picker unavailable. Use search or GPS instead.");
+        }
       });
 
     return () => {
@@ -316,11 +315,7 @@ export default function ReportLocationPicker({
     };
   }, [mapEnabled, commitLocationWithReverseGeocode]);
 
-  useEffect(() => {
-    if (inputRef.current && inputRef.current.value !== value.label) {
-      inputRef.current.value = value.label;
-    }
-  }, [value.label]);
+  const listboxId = "report-location-suggestions";
 
   return (
     <div className="location-picker-card">
@@ -340,22 +335,42 @@ export default function ReportLocationPicker({
         </div>
       </div>
 
-      <input
-        value={value.label}
-        id="report-location"
-        onChange={(event) =>
-          // Free text alone has no coordinates. Clear the previous pin so a
-          // typed "Rohini" can't be saved at the old location's lat/lng;
-          // picking a suggestion, detecting, or dropping a pin sets them.
-          onChange({
-            label: event.target.value,
-            lat: "",
-            lng: "",
-          })
-        }
-        placeholder={t("location_picker_search")}
-        ref={inputRef}
-      />
+      <div className="location-picker-search">
+        <input
+          value={value.label}
+          id="report-location"
+          role="combobox"
+          aria-autocomplete="list"
+          aria-expanded={suggestions.length > 0}
+          aria-controls={listboxId}
+          aria-activedescendant={activeIndex >= 0 ? `${listboxId}-${activeIndex}` : undefined}
+          autoComplete="off"
+          onChange={(event) => handleInput(event.target.value)}
+          onKeyDown={handleKeyDown}
+          onBlur={() => window.setTimeout(() => setSuggestions([]), 150)}
+          placeholder={t("location_picker_search")}
+        />
+        {suggestions.length > 0 && (
+          <ul className="location-picker-suggestions" id={listboxId} role="listbox">
+            {suggestions.map((suggestion, index) => (
+              <li
+                key={suggestion.placeId}
+                id={`${listboxId}-${index}`}
+                role="option"
+                aria-selected={index === activeIndex}
+                className={index === activeIndex ? "is-active" : ""}
+                // mousedown fires before the input's blur closes the list.
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                  void selectSuggestion(suggestion);
+                }}
+              >
+                {suggestion.text}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
 
       {mapEnabled && (
         <div className="location-picker-map">
@@ -365,7 +380,7 @@ export default function ReportLocationPicker({
               <strong>{status === "error" ? "Map unavailable" : "Loading map picker"}</strong>
               <span>
                 {status === "error"
-                  ? "Location can still be set after the API key is fixed."
+                  ? "Search or GPS still set the location."
                   : "Preparing draggable report pin."}
               </span>
             </div>

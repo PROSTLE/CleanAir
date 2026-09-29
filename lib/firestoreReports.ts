@@ -1,4 +1,5 @@
 import type { Timestamp } from "firebase/firestore";
+import type { Closure } from "@/lib/closure";
 import { toCoordinate } from "@/lib/geo";
 import type {
   HazardType,
@@ -48,6 +49,10 @@ export interface FirestoreReport {
   integrity?: ReportIntegrity;
   workOrder?: WorkOrder;
   channel?: "web" | "whatsapp";
+  closure?: Closure | null;
+  reopenedBy?: string | null;
+  /** Set on reports when they are promoted into an incident. */
+  incidentId?: string;
   // Written by ambientScan.ts — carries the full signal picture for the
   // map popup without committing to a single hazard label.
   possibleSources?: string[];
@@ -194,6 +199,8 @@ export function reportToIncident(id: string, report: FirestoreReport): Incident 
     integrity: report.integrity,
     workOrder: report.workOrder,
     channel: report.channel,
+    closure: report.closure ?? null,
+    reopenedBy: report.reopenedBy ?? null,
     possibleSources: report.possibleSources,
     triggerPollutants: report.triggerPollutants
       ?.filter((pollutant) => typeof pollutant.name === "string")

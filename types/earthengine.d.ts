@@ -28,7 +28,15 @@ declare module "@google/earthengine" {
     }) => EEObject;
     get: (property: string) => EEObject;
     getInfo: <T>(success: Callback<T>, error: ErrorCallback) => void;
+    // Used by the WorldPop population lookup.
+    filter: (filter: unknown) => EEObject;
+    mosaic: () => EEObject;
+    aggregate_max: (property: string) => EEObject;
   }
+
+  export const Filter: {
+    eq: (name: string, value: unknown) => unknown;
+  };
 
   export const data: {
     authenticateViaPrivateKey: (
