@@ -3,6 +3,8 @@
 // to tell a fire apart from general smog/haze — see lib/ambientScan.ts.
 // Citizen reports always resolve to a specific "fire" or "smog" once Gemini
 // has actually looked at a photo (lib/firestoreReports.ts).
+import type { StationFeed } from "@/lib/stationFeeds";
+
 import type { Closure } from "@/lib/closure";
 
 export type HazardType = "fire" | "smog" | "dust" | "industrial" | "particulate";
@@ -118,7 +120,7 @@ export interface IncidentEvidence {
     trend: "rising" | "flat" | "falling" | "insufficient_data";
     // "unavailable" = no station reading; "estimated" only survives on
     // legacy docs written before placeholder values were removed.
-    source?: "CPCB" | "WAQI" | "estimated" | "unavailable";
+    source?: StationFeed | "estimated" | "unavailable";
     stationName?: string;
     /** Agency operating the station, when the feed names it. */
     attribution?: string | null;

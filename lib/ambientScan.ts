@@ -235,16 +235,16 @@ const SATELLITE_SCAN_CONCURRENCY = 4;
 const REQUIRED_CONSECUTIVE_OBSERVATIONS = 2;
 const MAX_OBSERVATION_GAP_HOURS = 6;
 
-// Delhi uses Indian AQI concentration breakpoints (µg/m³): a single reading
-// in the "Poor" band can open an incident immediately; a "Moderate" reading
-// must also be anomalous and persist across two independently timestamped
-// observations. Other capitals use their own national 24-hour limit as the
-// watch level and 1.5x that limit as the immediate-incident level; gases
-// are only tested where the network reports them (see lib/cities.ts).
+// Indian cities use the National AQI concentration breakpoints (µg/m³): a
+// single reading in the "Poor" band can open an incident immediately; a
+// "Moderate" reading must also be anomalous and persist across two
+// independently timestamped observations. The BRICS capitals use their own
+// national 24-hour limit as the watch level and 1.5x that limit as the
+// immediate-incident level; gases are only tested where a feed reports them.
 type AmbientPollutant = "PM2.5" | "PM10" | "NO2" | "SO2";
 type AmbientThresholds = Partial<Record<AmbientPollutant, { watch: number; incident: number }>>;
 
-const DELHI_AMBIENT_THRESHOLDS: AmbientThresholds = {
+const INDIA_AMBIENT_THRESHOLDS: AmbientThresholds = {
   "PM2.5": { watch: 61, incident: 91 },
   PM10: { watch: 101, incident: 251 },
   NO2: { watch: 81, incident: 181 },
@@ -252,7 +252,7 @@ const DELHI_AMBIENT_THRESHOLDS: AmbientThresholds = {
 };
 
 function getCityAmbientThresholds(city: CityConfig): AmbientThresholds {
-  if (city.id === "delhi") return DELHI_AMBIENT_THRESHOLDS;
+  if (city.countryCode === "in") return INDIA_AMBIENT_THRESHOLDS;
   const fromStandard = (limit: number | null) =>
     limit ? { watch: limit, incident: Math.round(limit * 1.5) } : undefined;
   return {

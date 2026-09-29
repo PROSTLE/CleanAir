@@ -1,3 +1,4 @@
+import { isStationFeed } from "@/lib/stationFeeds";
 import type { HazardType, IncidentEvidence, PromotionTier } from "@/lib/types";
 
 /**
@@ -93,8 +94,8 @@ export function checkStoredSensorSupport(
   sensor: IncidentEvidence["sensor"] | null | undefined,
 ): boolean {
   if (!sensor) return false;
-  // Every real station network must be fresh (CPCB and WAQI alike).
-  if ((sensor.source === "CPCB" || sensor.source === "WAQI") && !isSensorReadingFresh(sensor.lastUpdated)) {
+  // Every real station reading must be fresh, whichever feed relayed it.
+  if (isStationFeed(sensor.source) && !isSensorReadingFresh(sensor.lastUpdated)) {
     return false;
   }
   const distanceKm = sensor.distanceKm ?? null;

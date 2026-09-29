@@ -13,7 +13,7 @@ interface CityContextValue {
   /**
    * False during the first (server-matching) render, before the saved city is
    * read. City-specific fetches and maps wait for it, so a page opened for
-   * Jakarta never fetches Delhi first.
+   * Mumbai never fetches Delhi first.
    */
   ready: boolean;
 }

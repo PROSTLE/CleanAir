@@ -6,6 +6,7 @@ import { adminDb, adminServerTimestamp } from "@/lib/firebaseAdmin";
 import { TIER_LABELS } from "@/lib/supportEvidence";
 import { generateJson, isGeminiConfigured } from "@/lib/server/gemini";
 import { HttpError } from "@/lib/server/http";
+import { isStationFeed } from "@/lib/stationFeeds";
 import { buildAttributionForPoint } from "@/lib/server/incidentContext";
 import type { ZoneCell, ZoneSummary } from "@/lib/server/zoneSummary";
 import { UI_LANGUAGES } from "@/lib/uiLanguages";
@@ -66,7 +67,7 @@ function buildFacts(summary: ZoneSummary, attribution: AttributionResult | null)
         citizenReports: evidence?.citizenSignal?.reportCount ?? 0,
         possibleSources: incident.possibleSources ?? null,
         station:
-          sensor?.stationName && (sensor.source === "CPCB" || sensor.source === "WAQI")
+          sensor?.stationName && isStationFeed(sensor.source)
             ? {
                 name: sensor.stationName,
                 pollutant: sensor.primaryName ?? null,

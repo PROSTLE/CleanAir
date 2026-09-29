@@ -1,13 +1,17 @@
 import "server-only";
 
-import { CITIES, isInCity, resolveCityForPoint, type CityConfig } from "@/lib/cities";
+import { CITIES, isInCity, resolveCityForPoint, type CityConfig, type StationSource } from "@/lib/cities";
 import { fetchCpcbStations } from "@/lib/cpcbSensor";
 import { haversineKm } from "@/lib/geo";
+import { fetchOpenAqStations } from "@/lib/server/openaq";
 import { fetchWaqiStations } from "@/lib/server/waqi";
+import type { StationFeed } from "@/lib/stationFeeds";
+import { hasUsablePollutantData, mergeStationFeeds } from "@/lib/stationMerge";
 
-// One station interface over every city's ground network: CPCB for Delhi,
-// WAQI for the other capitals (see lib/cities.ts). Values are µg/m³; a
-// pollutant the network doesn't report is null, never estimated.
+// One station interface over every public feed: OpenAQ, WAQI and CPCB via
+// data.gov.in, merged per city (see lib/cities.ts). Names and coordinates
+// always come from the feeds. Values are µg/m³ (CO in mg/m³); a pollutant
+// the feed doesn't report is null, never estimated.
 export type StationReading = {
   stationName: string;
   lat: number;
@@ -21,36 +25,83 @@ export type StationReading = {
   nh3: number | null;
   ozone: number | null;
   lastUpdated: string | null;
-  source: "CPCB" | "WAQI";
+  source: StationFeed;
   /** Agency that operates the station, when the feed names it. */
   attribution: string | null;
+  /**
+   * The monitor exists but hasn't reported in the last day. Stale stations
+   * carry their position and last-reported time only, and are left out of
+   * every reading used for evidence, alerts, forecasts and BigQuery.
+   */
+  stale: boolean;
 };
 
 type Standards = CityConfig["standards"];
 
-function hasUsablePollutantData(station: StationReading) {
-  return [station.pm25, station.pm10, station.no2, station.so2, station.co, station.nh3, station.ozone].some(
-    (value) => value !== null,
+
+// One slow feed (data.gov.in hangs rather than failing) must not hold up the
+// others. A feed that misses its budget keeps loading in the background and
+// fills its cache, so the next request gets it.
+const FEEDS: Record<
+  StationSource,
+  { label: StationFeed; timeoutMs: number; fetch: (city: CityConfig) => Promise<StationReading[]> }
+> = {
+  openaq: { label: "OpenAQ", timeoutMs: 30_000, fetch: fetchOpenAqStations },
+  waqi: { label: "WAQI", timeoutMs: 20_000, fetch: fetchWaqiStations },
+  cpcb: {
+    label: "CPCB",
+    timeoutMs: 10_000,
+    fetch: async (city) => (await fetchCpcbStations()).filter((station) => nearCity(city, station)),
+  },
+};
+
+// The CPCB feed is national; keep what's in or just around the city (the
+// same margin the other feeds query with) before merging.
+const NEAR_CITY_PAD_DEG = 0.1;
+function nearCity(city: CityConfig, station: StationReading) {
+  const { minLat, maxLat, minLng, maxLng } = city.bounds;
+  return (
+    station.lat >= minLat - NEAR_CITY_PAD_DEG &&
+    station.lat <= maxLat + NEAR_CITY_PAD_DEG &&
+    station.lng >= minLng - NEAR_CITY_PAD_DEG &&
+    station.lng <= maxLng + NEAR_CITY_PAD_DEG
   );
 }
 
-async function fetchNetworkStations(city: CityConfig): Promise<StationReading[]> {
+async function fetchFeed(city: CityConfig, source: StationSource): Promise<StationReading[]> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    return city.stations.provider === "cpcb" ? await fetchCpcbStations() : await fetchWaqiStations(city);
+    return await Promise.race([
+      FEEDS[source].fetch(city),
+      new Promise<StationReading[]>((_, reject) => {
+        const { timeoutMs } = FEEDS[source];
+        timer = setTimeout(() => reject(new Error(`timed out after ${timeoutMs / 1000} s`)), timeoutMs);
+      }),
+    ]);
   } catch (error) {
-    console.warn(`Station feed for ${city.name} failed`, error instanceof Error ? error.message : error);
+    console.warn(`${FEEDS[source].label} stations for ${city.name} failed`, error instanceof Error ? error.message : error);
     return [];
+  } finally {
+    clearTimeout(timer);
   }
 }
 
-/** Stations inside the city boundary that report at least one pollutant. */
-export async function fetchCityStationReadings(city: CityConfig): Promise<StationReading[]> {
-  return (await fetchNetworkStations(city)).filter(
-    (station) => hasUsablePollutantData(station) && isInCity(city, station.lat, station.lng),
-  );
+async function fetchNetworkStations(city: CityConfig): Promise<StationReading[]> {
+  const feeds = await Promise.all(city.stations.sources.map((source) => fetchFeed(city, source)));
+  return mergeStationFeeds(feeds);
 }
 
-/** Every monitored city's stations, tagged with the city they belong to. */
+/** Every known monitor inside the city, live or stale, for maps and zone pickers. */
+export async function fetchCityStationDirectory(city: CityConfig): Promise<StationReading[]> {
+  return (await fetchNetworkStations(city)).filter((station) => isInCity(city, station.lat, station.lng));
+}
+
+/** Stations inside the city boundary with a reading from the last day. */
+export async function fetchCityStationReadings(city: CityConfig): Promise<StationReading[]> {
+  return (await fetchCityStationDirectory(city)).filter((station) => !station.stale);
+}
+
+/** Every monitored city's live stations, tagged with the city they belong to. */
 export async function fetchAllCityStationReadings() {
   const perCity = await Promise.all(
     CITIES.map(async (city) => (await fetchCityStationReadings(city)).map((station) => ({ ...station, cityId: city.id }))),
@@ -63,6 +114,7 @@ export async function fetchNearbyStations(lat: number, lng: number, radiusKm = 1
   const city = resolveCityForPoint(lat, lng);
   if (!city) return [];
   return (await fetchNetworkStations(city))
+    .filter((station) => !station.stale)
     .map((station) => ({
       ...station,
       distanceKm: Number(haversineKm(lat, lng, station.lat, station.lng).toFixed(2)),

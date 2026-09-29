@@ -1,21 +1,45 @@
-// The capitals VayuSetu monitors. One config per city drives the map view,
-// station network, exceedance thresholds, fire region, suggested authorities
-// and languages, so every page and pipeline switches city from one place.
+// The cities VayuSetu monitors, in two groups: major Indian cities and the
+// other BRICS capitals. One config per city drives the map view, station
+// network, exceedance thresholds, fire region, suggested authorities and
+// languages, so every page and pipeline switches city from one place.
 //
-// A capital is listed only if a public, real-time ground-station feed covers
-// it (checked Sep 2026). Cairo and Addis Ababa are left out: their only live
-// monitor was the US Embassy one, and that network went offline in March 2025.
-// Tehran is left out too: its public feed has not updated since December 2025.
+// Stations are never listed here: their names and coordinates come from the
+// public feeds at runtime (OpenAQ, WAQI and CPCB via data.gov.in, see
+// lib/stations.ts), so a moved or retired monitor is never shown at a stale
+// hand-typed spot.
+//
+// A BRICS capital is listed only if a public, real-time ground-station feed
+// covers it (checked Sep 2026). Cairo and Addis Ababa are left out: their only
+// live monitor was the US Embassy one, and that network went offline in March
+// 2025. Tehran is left out too: its public feed has not updated since
+// December 2025.
 import { CITY_BOUNDARIES, type Ring } from "@/lib/cityBoundaries";
 import { haversineKm } from "@/lib/geo";
 import type { HazardType } from "@/lib/types";
 import { MONITORED_CELLS } from "@/lib/mapConstants";
 
-export type StationProvider = "cpcb" | "waqi";
+/** Public station feeds, merged per city (see lib/stations.ts). */
+export type StationSource = "openaq" | "waqi" | "cpcb";
+
+export type CityGroup = "india" | "brics";
+
+/** Picker sections, in display order. */
+export const CITY_GROUPS: ReadonlyArray<{ id: CityGroup; labelKey: string }> = [
+  { id: "india", labelKey: "city_group_india" },
+  { id: "brics", labelKey: "city_group_brics" },
+];
 
 export interface CityConfig {
   id: string;
   name: string;
+  /** State (Indian cities) or country (BRICS capitals), shown under the city name. */
+  region: string;
+  group: CityGroup;
+  /**
+   * Scale for the AQI gauge: India's National AQI for Indian cities; the US
+   * EPA AQI elsewhere, the index the WAQI stations there publish.
+   */
+  aqiScale: "india" | "us";
   country: string;
   /** ISO 3166-1 alpha-2, lower case (Places autocomplete restriction). */
   countryCode: string;
@@ -25,7 +49,8 @@ export interface CityConfig {
   boundary: Ring[];
   bounds: { minLat: number; maxLat: number; minLng: number; maxLng: number };
   stations: {
-    provider: StationProvider;
+    /** Feeds to merge, in order of preference when two report the same monitor. */
+    sources: StationSource[];
     network: string;
     coverage: "dense" | "moderate" | "sparse";
   };
@@ -40,7 +65,7 @@ export interface CityConfig {
   authorities: Record<HazardType, string>;
   /** Second language for work orders, besides English. */
   localLanguage: { code: string; name: string } | null;
-  /** Google Speech-to-Text language for voice notes (Delhi follows the UI language). */
+  /** Speech-to-Text fallback for voice notes (they normally follow the UI language). */
   speechLanguage: string;
   /** Delhi has a measured diurnal PM2.5 profile; other cities forecast without one. */
   forecastProfile: "delhi" | "generic";
@@ -50,17 +75,29 @@ export interface CityConfig {
 
 type CitySeed = Omit<CityConfig, "boundary" | "bounds">;
 
+const INDIA_NAAQS: CityConfig["standards"] = {
+  source: "India NAAQS 2009 (24 h)",
+  pm25: 60,
+  pm10: 100,
+  no2: 80,
+  so2: 80,
+};
+
+const ALL_SOURCES: StationSource[] = ["openaq", "waqi", "cpcb"];
+const NETWORK = "CPCB and state board stations via OpenAQ, WAQI and data.gov.in";
+
 const SEEDS: CitySeed[] = [
   {
     id: "delhi",
     name: "New Delhi",
+    region: "Delhi NCT",
     country: "India",
     countryCode: "in",
     center: { lat: 28.6139, lng: 77.209 },
     zoom: 10,
     timeZone: "Asia/Kolkata",
-    stations: { provider: "cpcb", network: "CPCB / DPCC continuous stations", coverage: "dense" },
-    standards: { source: "India NAAQS 2009 (24 h)", pm25: 60, pm10: 100, no2: 80, so2: 80 },
+    stations: { sources: ALL_SOURCES, network: NETWORK, coverage: "dense" },
+    standards: INDIA_NAAQS,
     fireRegion: { bounds: [73.8, 27.8, 78.2, 32.6], label: "Punjab, Haryana and Delhi NCR" },
     authorities: {
       fire: "Municipal Corporation of Delhi (MCD) — Sanitation / waste-burning enforcement",
@@ -71,18 +108,151 @@ const SEEDS: CitySeed[] = [
     },
     localLanguage: { code: "hi", name: "हिन्दी" },
     speechLanguage: "hi-IN",
+    group: "india",
+    aqiScale: "india",
     forecastProfile: "delhi",
     monitoredAreas: MONITORED_CELLS,
   },
   {
+    id: "mumbai",
+    name: "Mumbai",
+    region: "Maharashtra",
+    country: "India",
+    countryCode: "in",
+    center: { lat: 19.076, lng: 72.8777 },
+    zoom: 10.3,
+    timeZone: "Asia/Kolkata",
+    stations: { sources: ALL_SOURCES, network: NETWORK, coverage: "dense" },
+    standards: INDIA_NAAQS,
+    fireRegion: { bounds: [72.6, 18.7, 73.5, 19.8], label: "Mumbai Metropolitan Region" },
+    authorities: {
+      fire: "Brihanmumbai Municipal Corporation (BMC) — Solid Waste Management / open-burning enforcement",
+      dust: "Brihanmumbai Municipal Corporation (BMC) — construction dust enforcement",
+      industrial: "Maharashtra Pollution Control Board (MPCB)",
+      smog: "Mumbai Traffic Police — traffic management",
+      particulate: "Maharashtra Pollution Control Board (MPCB) — field inspection",
+    },
+    localLanguage: { code: "mr", name: "मराठी" },
+    speechLanguage: "mr-IN",
+    group: "india",
+    aqiScale: "india",
+    forecastProfile: "generic",
+    monitoredAreas: [],
+  },
+  {
+    id: "kolkata",
+    name: "Kolkata",
+    region: "West Bengal",
+    country: "India",
+    countryCode: "in",
+    center: { lat: 22.5726, lng: 88.3639 },
+    zoom: 11,
+    timeZone: "Asia/Kolkata",
+    stations: { sources: ALL_SOURCES, network: NETWORK, coverage: "moderate" },
+    standards: INDIA_NAAQS,
+    fireRegion: { bounds: [87.8, 22.0, 88.9, 23.2], label: "Kolkata Metropolitan Area" },
+    authorities: {
+      fire: "Kolkata Municipal Corporation (KMC) — Solid Waste Management / open-burning enforcement",
+      dust: "Kolkata Municipal Corporation (KMC) — construction dust enforcement",
+      industrial: "West Bengal Pollution Control Board (WBPCB)",
+      smog: "Kolkata Traffic Police — traffic management",
+      particulate: "West Bengal Pollution Control Board (WBPCB) — field inspection",
+    },
+    localLanguage: { code: "bn", name: "বাংলা" },
+    speechLanguage: "bn-IN",
+    group: "india",
+    aqiScale: "india",
+    forecastProfile: "generic",
+    monitoredAreas: [],
+  },
+  {
+    id: "chennai",
+    name: "Chennai",
+    region: "Tamil Nadu",
+    country: "India",
+    countryCode: "in",
+    center: { lat: 13.0827, lng: 80.2707 },
+    zoom: 10.6,
+    timeZone: "Asia/Kolkata",
+    stations: { sources: ALL_SOURCES, network: NETWORK, coverage: "moderate" },
+    standards: INDIA_NAAQS,
+    fireRegion: { bounds: [79.8, 12.5, 80.5, 13.5], label: "Chennai Metropolitan Area" },
+    authorities: {
+      fire: "Greater Chennai Corporation (GCC) — Solid Waste Management / open-burning enforcement",
+      dust: "Greater Chennai Corporation (GCC) — construction dust enforcement",
+      industrial: "Tamil Nadu Pollution Control Board (TNPCB)",
+      smog: "Greater Chennai Traffic Police — traffic management",
+      particulate: "Tamil Nadu Pollution Control Board (TNPCB) — field inspection",
+    },
+    localLanguage: { code: "ta", name: "தமிழ்" },
+    speechLanguage: "ta-IN",
+    group: "india",
+    aqiScale: "india",
+    forecastProfile: "generic",
+    monitoredAreas: [],
+  },
+  {
+    id: "bengaluru",
+    name: "Bengaluru",
+    region: "Karnataka",
+    country: "India",
+    countryCode: "in",
+    center: { lat: 12.9716, lng: 77.5946 },
+    zoom: 10.4,
+    timeZone: "Asia/Kolkata",
+    stations: { sources: ALL_SOURCES, network: NETWORK, coverage: "moderate" },
+    standards: INDIA_NAAQS,
+    fireRegion: { bounds: [77.2, 12.6, 78.0, 13.4], label: "Bengaluru Urban and Rural districts" },
+    authorities: {
+      fire: "Greater Bengaluru Authority (GBA) — Solid Waste Management / open-burning enforcement",
+      dust: "Greater Bengaluru Authority (GBA) — construction dust enforcement",
+      industrial: "Karnataka State Pollution Control Board (KSPCB)",
+      smog: "Bengaluru Traffic Police — traffic management",
+      particulate: "Karnataka State Pollution Control Board (KSPCB) — field inspection",
+    },
+    localLanguage: { code: "kn", name: "ಕನ್ನಡ" },
+    speechLanguage: "kn-IN",
+    group: "india",
+    aqiScale: "india",
+    forecastProfile: "generic",
+    monitoredAreas: [],
+  },
+  {
+    id: "hyderabad",
+    name: "Hyderabad",
+    region: "Telangana",
+    country: "India",
+    countryCode: "in",
+    center: { lat: 17.385, lng: 78.4867 },
+    zoom: 10.4,
+    timeZone: "Asia/Kolkata",
+    stations: { sources: ALL_SOURCES, network: NETWORK, coverage: "moderate" },
+    standards: INDIA_NAAQS,
+    fireRegion: { bounds: [78.0, 17.0, 79.0, 17.8], label: "Hyderabad, Rangareddy and Medchal districts" },
+    authorities: {
+      fire: "Greater Hyderabad Municipal Corporation (GHMC) — Sanitation / open-burning enforcement",
+      dust: "Greater Hyderabad Municipal Corporation (GHMC) — construction dust enforcement",
+      industrial: "Telangana Pollution Control Board (TGPCB)",
+      smog: "Hyderabad Traffic Police — traffic management",
+      particulate: "Telangana Pollution Control Board (TGPCB) — field inspection",
+    },
+    localLanguage: { code: "te", name: "తెలుగు" },
+    speechLanguage: "te-IN",
+    group: "india",
+    aqiScale: "india",
+    forecastProfile: "generic",
+    monitoredAreas: [],
+  },
+  {
     id: "beijing",
     name: "Beijing",
+    region: "China",
     country: "China",
     countryCode: "cn",
     center: { lat: 39.9042, lng: 116.4074 },
     zoom: 9.5,
     timeZone: "Asia/Shanghai",
-    stations: { provider: "waqi", network: "China national monitoring network via WAQI", coverage: "dense" },
+    stations: { sources: ["waqi"], network: "China national monitoring network via WAQI", coverage: "dense" },
     standards: { source: "China GB 3095-2012 Grade II (24 h)", pm25: 75, pm10: 150, no2: null, so2: null },
     fireRegion: { bounds: [114.0, 37.5, 119.5, 41.6], label: "Beijing, Tianjin and Hebei" },
     authorities: {
@@ -94,18 +264,21 @@ const SEEDS: CitySeed[] = [
     },
     localLanguage: { code: "zh", name: "中文" },
     speechLanguage: "cmn-Hans-CN",
+    group: "brics",
+    aqiScale: "us",
     forecastProfile: "generic",
     monitoredAreas: [],
   },
   {
     id: "moscow",
     name: "Moscow",
+    region: "Russia",
     country: "Russia",
     countryCode: "ru",
     center: { lat: 55.7558, lng: 37.6173 },
     zoom: 10,
     timeZone: "Europe/Moscow",
-    stations: { provider: "waqi", network: "Mosecomonitoring via WAQI", coverage: "dense" },
+    stations: { sources: ["waqi"], network: "Mosecomonitoring via WAQI", coverage: "dense" },
     standards: { source: "Russia SanPiN 1.2.3685-21 (24 h)", pm25: 35, pm10: 60, no2: null, so2: null },
     fireRegion: { bounds: [35.0, 54.3, 40.5, 57.0], label: "Moscow and neighbouring oblasts" },
     authorities: {
@@ -117,18 +290,21 @@ const SEEDS: CitySeed[] = [
     },
     localLanguage: { code: "ru", name: "Русский" },
     speechLanguage: "ru-RU",
+    group: "brics",
+    aqiScale: "us",
     forecastProfile: "generic",
     monitoredAreas: [],
   },
   {
     id: "pretoria",
     name: "Pretoria",
+    region: "South Africa",
     country: "South Africa",
     countryCode: "za",
     center: { lat: -25.7479, lng: 28.2293 },
     zoom: 10,
     timeZone: "Africa/Johannesburg",
-    stations: { provider: "waqi", network: "SAAQIS and local stations via WAQI", coverage: "moderate" },
+    stations: { sources: ["waqi"], network: "SAAQIS and local stations via WAQI", coverage: "moderate" },
     standards: { source: "South Africa NAAQS (24 h)", pm25: 40, pm10: 75, no2: null, so2: null },
     fireRegion: { bounds: [26.5, -27.5, 30.5, -24.0], label: "Gauteng and the surrounding Highveld" },
     authorities: {
@@ -140,18 +316,21 @@ const SEEDS: CitySeed[] = [
     },
     localLanguage: null,
     speechLanguage: "en-ZA",
+    group: "brics",
+    aqiScale: "us",
     forecastProfile: "generic",
     monitoredAreas: [],
   },
   {
     id: "abu-dhabi",
     name: "Abu Dhabi",
+    region: "United Arab Emirates",
     country: "United Arab Emirates",
     countryCode: "ae",
     center: { lat: 24.4539, lng: 54.3773 },
     zoom: 10.5,
     timeZone: "Asia/Dubai",
-    stations: { provider: "waqi", network: "Environment Agency Abu Dhabi stations via WAQI", coverage: "moderate" },
+    stations: { sources: ["waqi"], network: "Environment Agency Abu Dhabi stations via WAQI", coverage: "moderate" },
     standards: { source: "UAE Cabinet Decree 12/2006; PM2.5 per EAQI 2023 (24 h)", pm25: 60, pm10: 150, no2: null, so2: null },
     fireRegion: { bounds: [52.5, 23.3, 56.0, 25.8], label: "Abu Dhabi and Dubai emirates" },
     authorities: {
@@ -163,18 +342,21 @@ const SEEDS: CitySeed[] = [
     },
     localLanguage: { code: "ar", name: "العربية" },
     speechLanguage: "ar-AE",
+    group: "brics",
+    aqiScale: "us",
     forecastProfile: "generic",
     monitoredAreas: [],
   },
   {
     id: "jakarta",
     name: "Jakarta",
+    region: "Indonesia",
     country: "Indonesia",
     countryCode: "id",
     center: { lat: -6.2088, lng: 106.8456 },
     zoom: 10.5,
     timeZone: "Asia/Jakarta",
-    stations: { provider: "waqi", network: "Jakarta stations and sensors via WAQI", coverage: "moderate" },
+    stations: { sources: ["waqi"], network: "Jakarta stations and sensors via WAQI", coverage: "moderate" },
     standards: { source: "Indonesia PP 22/2021 (24 h)", pm25: 55, pm10: 75, no2: null, so2: null },
     fireRegion: { bounds: [105.5, -7.3, 108.0, -5.5], label: "Jakarta, Banten and West Java" },
     authorities: {
@@ -186,18 +368,21 @@ const SEEDS: CitySeed[] = [
     },
     localLanguage: { code: "id", name: "Bahasa Indonesia" },
     speechLanguage: "id-ID",
+    group: "brics",
+    aqiScale: "us",
     forecastProfile: "generic",
     monitoredAreas: [],
   },
   {
     id: "brasilia",
     name: "Brasília",
+    region: "Brazil",
     country: "Brazil",
     countryCode: "br",
     center: { lat: -15.7939, lng: -47.8828 },
     zoom: 10,
     timeZone: "America/Sao_Paulo",
-    stations: { provider: "waqi", network: "Distrito Federal sensors via WAQI", coverage: "sparse" },
+    stations: { sources: ["waqi"], network: "Distrito Federal sensors via WAQI", coverage: "sparse" },
     standards: { source: "Brazil CONAMA 491/2018 PI-2 (24 h)", pm25: 50, pm10: 100, no2: null, so2: null },
     fireRegion: { bounds: [-50.0, -17.5, -45.5, -14.0], label: "Distrito Federal and the surrounding Cerrado" },
     authorities: {
@@ -209,6 +394,8 @@ const SEEDS: CitySeed[] = [
     },
     localLanguage: { code: "pt", name: "Português" },
     speechLanguage: "pt-BR",
+    group: "brics",
+    aqiScale: "us",
     forecastProfile: "generic",
     monitoredAreas: [],
   },
@@ -224,7 +411,7 @@ function boundsOf(rings: Ring[]) {
   };
 }
 
-// GeoJSON rings must end where they start; trimmed rings (Jakarta) may not.
+// GeoJSON rings must end where they start; a trimmed ring may not.
 function closeRing(ring: Ring): Ring {
   const [firstLng, firstLat] = ring[0];
   const [lastLng, lastLat] = ring[ring.length - 1];
@@ -299,10 +486,10 @@ export function formatCityTime(
   return new Date(value).toLocaleString("en-GB", { timeZone: city.timeZone, ...options });
 }
 
-/** Short zone label for the city's time zone, e.g. "IST", "MSK", "GMT+8". */
+/** Short zone label for the city's time zone, e.g. "IST". */
 export function cityTimeZoneLabel(city: CityConfig) {
   const part = new Intl.DateTimeFormat("en-US", { timeZone: city.timeZone, timeZoneName: "short" })
     .formatToParts(new Date())
     .find((item) => item.type === "timeZoneName");
-  return city.id === "delhi" ? "IST" : (part?.value ?? city.timeZone);
+  return city.timeZone === "Asia/Kolkata" ? "IST" : (part?.value ?? city.timeZone);
 }

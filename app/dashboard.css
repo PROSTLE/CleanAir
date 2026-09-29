@@ -504,3 +504,13 @@
     grid-template-columns: 88px minmax(0, 1fr) 30px;
   }
 }
+
+/* City AQI gauge in the header, between the title and operator sign-in. */
+.svd-head-gauge {
+  flex: 0 0 auto;
+  width: 190px;
+  padding: 12px 12px 10px;
+  border: 1px solid var(--sv-line);
+  border-radius: 12px;
+  background: var(--surface);
+}

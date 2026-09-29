@@ -13,6 +13,7 @@ import { getCellRecurrence } from "@/lib/server/incidentEvents";
 import type { Piece } from "@/lib/server/incidentContext";
 import { findSensitiveSites, isPlacesConfigured, reverseGeocode, type SensitiveSite } from "@/lib/server/places";
 import { fetchCityStationReadings } from "@/lib/stations";
+import type { StationFeed } from "@/lib/stationFeeds";
 import { isSensorReadingFresh } from "@/lib/supportEvidence";
 import type { Incident } from "@/lib/types";
 
@@ -30,7 +31,7 @@ export type ZoneStation = {
   no2: number | null;
   lastUpdated: string | null;
   fresh: boolean;
-  source: "CPCB" | "WAQI";
+  source: StationFeed;
   attribution: string | null;
 };
 

@@ -8,6 +8,7 @@ import { cityTimeZoneLabel, formatCityTime, resolveCityForPoint } from "@/lib/ci
 import { useCity } from "@/lib/cityContext";
 import { compassLabel } from "@/lib/geo";
 import { useT } from "@/lib/languageContext";
+import { isStationFeed } from "@/lib/stationFeeds";
 import { TIER_LABELS } from "@/lib/supportEvidence";
 import type { Incident, WorkOrder } from "@/lib/types";
 import Link from "next/link";
@@ -222,7 +223,7 @@ export default function IncidentDrawer({
 
   const recommendedAction = t(getRecommendedActionKey(incident)) || getRecommendedAction(incident);
   const sensor = evidence?.sensor;
-  const hasStationReading = (sensor?.source === "CPCB" || sensor?.source === "WAQI") && !!sensor.stationName;
+  const hasStationReading = isStationFeed(sensor?.source) && !!sensor?.stationName;
   const satellite = evidence?.satellite;
   const fusion = evidence?.fusion;
   const tierLabel = evidence?.tier ? t(`tier_${evidence.tier}`) || TIER_LABELS[evidence.tier] : t("drawer_unpromoted");

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { createPortal } from "react-dom";
-import { CITIES } from "@/lib/cities";
+import { CITIES, CITY_GROUPS } from "@/lib/cities";
 import { useCity } from "@/lib/cityContext";
 import { useT } from "@/lib/languageContext";
 
@@ -103,8 +103,16 @@ export default function CitySelector({ onSelect }: CitySelectorProps = {}) {
               </button>
             </div>
 
+            {CITY_GROUPS.map((group) => (
+            <section key={group.id} style={{ marginTop: "18px" }} aria-labelledby={`city-group-${group.id}`}>
+            <h3
+              id={`city-group-${group.id}`}
+              style={{ margin: "0 0 10px", fontSize: "0.74rem", fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--muted)" }}
+            >
+              {t(group.labelKey)}
+            </h3>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: "12px" }}>
-              {CITIES.map((option) => {
+              {CITIES.filter((option) => option.group === group.id).map((option) => {
                 const selected = option.id === city.id;
                 return (
                   <button
@@ -132,15 +140,21 @@ export default function CitySelector({ onSelect }: CitySelectorProps = {}) {
                     <span style={{ fontSize: "1.1rem", fontWeight: 800, color: selected ? "var(--teal)" : "var(--ink)" }}>
                       {option.name}
                     </span>
-                    <span style={{ fontSize: "0.8rem", color: "var(--muted)", fontWeight: 600 }}>{option.country}</span>
+                    <span style={{ fontSize: "0.8rem", color: "var(--muted)", fontWeight: 600 }}>{option.region}</span>
                     <span style={{ fontSize: "0.72rem", color: "var(--muted)" }}>
-                      {t(`city_coverage_${option.stations.coverage}`)} · {option.stations.network}
+                      {t(`city_coverage_${option.stations.coverage}`)}
+                      {option.group === "brics" ? ` · ${option.stations.network}` : ""}
                     </span>
                   </button>
                 );
               })}
             </div>
-            <p style={{ margin: "20px 0 0", fontSize: "0.8rem", color: "var(--muted)" }}>{t("city_select_excluded")}</p>
+            {group.id === "brics" && (
+              <p style={{ margin: "10px 0 0", fontSize: "0.8rem", color: "var(--muted)" }}>{t("city_select_excluded")}</p>
+            )}
+            </section>
+            ))}
+            <p style={{ margin: "20px 0 0", fontSize: "0.8rem", color: "var(--muted)" }}>{t("city_select_sources_note")}</p>
           </div>
         </div>,
         document.body,

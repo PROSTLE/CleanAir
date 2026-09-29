@@ -66,9 +66,14 @@ type StationZones = { cityId: string; cells: ForecastCell[]; error: string | nul
 
 // Delhi has curated zones backed by a CPCB archive; every other city
 // forecasts at its live monitoring stations (H3 res-8 cell of each station).
-function stationsToCells(stations: Array<{ name: string; lat: number; lng: number; pm25: number | null }>): ForecastCell[] {
-  return stations
-    .filter((station) => station.pm25 !== null)
+// Zones sit on real monitors: live ones with PM2.5, and monitors that stopped
+// reporting (their forecast then runs on labelled modelled history).
+function stationsToCells(
+  stations: Array<{ name: string; lat: number; lng: number; pm25: number | null; stale?: boolean }>,
+): ForecastCell[] {
+  return [...stations]
+    .sort((a, b) => Number(a.stale ?? false) - Number(b.stale ?? false))
+    .filter((station) => station.pm25 !== null || station.stale)
     .map((station) => ({
       h3CellId: latLngToCell(station.lat, station.lng, 8),
       label: station.name,
@@ -169,7 +174,7 @@ export default function ForecastPage() {
     fetch(`/api/stations?city=${city.id}`)
       .then(async (response) => {
         const data = (await response.json().catch(() => null)) as
-          | { stations?: Array<{ name: string; lat: number; lng: number; pm25: number | null }>; error?: string }
+          | { stations?: Array<{ name: string; lat: number; lng: number; pm25: number | null; stale?: boolean }>; error?: string }
           | null;
         if (cancelled) return;
         const zones = stationsToCells(data?.stations ?? []);

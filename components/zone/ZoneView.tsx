@@ -3,10 +3,12 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import ForecastChart from "@/components/forecast/ForecastChart";
+import AqiGauge from "@/components/shared/AqiGauge";
 import Icon, { HAZARD_ICON } from "@/components/shared/Icon";
 import LiveIndicator from "@/components/shared/LiveIndicator";
 import ReadAloud from "@/components/shared/ReadAloud";
 import { closureDisplayState } from "@/lib/closure";
+import { AQI_SCALES } from "@/lib/aqiScales";
 import { findCity, formatCityTime } from "@/lib/cities";
 import { useCity } from "@/lib/cityContext";
 import type { ForecastResult, SensorReading } from "@/lib/forecastEngine";
@@ -192,6 +194,17 @@ export default function ZoneView({ cell }: { cell: string }) {
                   );
                 })}
               </ul>
+            )}
+            {zone.station.status === "ok" && zone.station.data?.fresh && (
+              <AqiGauge
+                scale={AQI_SCALES[findCity(zone.city.id)?.aqiScale ?? "india"]}
+                value={AQI_SCALES[findCity(zone.city.id)?.aqiScale ?? "india"].fromPm(
+                  zone.station.data.pm25,
+                  zone.station.data.pm10,
+                )}
+                title={t("aqi_gauge_title_area")}
+                caption={t("aqi_gauge_station_caption").replace("{station}", zone.station.data.stationName)}
+              />
             )}
             <ul className="svd-readings svd-zone-readings">
               {zone.station.status !== "ok" ? (

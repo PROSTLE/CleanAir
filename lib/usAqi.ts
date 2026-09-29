@@ -32,3 +32,14 @@ export function usAqiToConcentration(aqi: number | undefined, table: Breakpoint[
   const value = aqi <= aqiLow ? cLow : ((aqi - aqiLow) / (aqiHigh - aqiLow)) * (cHigh - cLow) + cLow;
   return Number(value.toFixed(1));
 }
+
+/** The EPA AQI formula: concentration → sub-index, capped at 500. */
+export function concentrationToUsAqi(concentration: number | null | undefined, table: Breakpoint[]): number | null {
+  if (concentration == null || !Number.isFinite(concentration) || concentration < 0) return null;
+  const row = table.find(([, , , cHigh]) => concentration <= cHigh);
+  if (!row) return 500;
+  const [aqiLow, aqiHigh, cLow, cHigh] = row;
+  // Values in the 0.1 gap between two bands belong to the upper one.
+  const clamped = Math.max(concentration, cLow);
+  return Math.round(((clamped - cLow) / (cHigh - cLow)) * (aqiHigh - aqiLow) + aqiLow);
+}

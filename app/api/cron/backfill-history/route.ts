@@ -10,7 +10,7 @@ export const maxDuration = 300;
  * Loads a week of Google Air Quality modelled PM history into BigQuery
  * (`google_aq_history`) for every city's forecast zones, so forecasts have
  * history before the station table has 12 hourly readings. Same bearer
- * secret as /api/cron/tick. ?city=beijing limits it to one city.
+ * secret as /api/cron/tick. ?city=mumbai limits it to one city.
  */
 export async function GET(request: Request) {
   return handleRoute(async () => {

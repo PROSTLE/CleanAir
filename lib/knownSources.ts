@@ -23,7 +23,7 @@ const DELHI_SOURCES: KnownSource[] = [
   { name: "ITO Crossing", kind: "traffic_hub", lat: 28.6292, lng: 77.241 },
 ];
 
-// Only Delhi has a curated list so far. Other capitals still get attribution
+// Only Delhi has a curated list so far. Other cities still get attribution
 // from live FIRMS fires and other open incidents; an empty list here means
 // "not curated yet", not "no sources".
 const KNOWN_SOURCES_BY_CITY: Record<string, KnownSource[]> = {

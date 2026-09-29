@@ -8,6 +8,7 @@ import IncidentDrawer, { type DrawerTarget } from "@/components/dashboard/Incide
 import ModelQualityCard from "@/components/dashboard/ModelQualityCard";
 import OperatorAuth, { COMMAND_CENTER_ID } from "@/components/dashboard/OperatorAuth";
 import OperatorCopilot from "@/components/dashboard/OperatorCopilot";
+import AqiGauge from "@/components/shared/AqiGauge";
 import Icon from "@/components/shared/Icon";
 import LiveIndicator from "@/components/shared/LiveIndicator";
 import { db, isFirebaseConfigured } from "@/lib/firebase";
@@ -18,6 +19,7 @@ import {
 } from "@/lib/firestoreReports";
 import { cityTimeZoneLabel, formatCityTime, isInCity, type CityConfig } from "@/lib/cities";
 import { useCity } from "@/lib/cityContext";
+import { AQI_SCALES, medianStationAqi } from "@/lib/aqiScales";
 import { parseSensorTimestamp, priorityRank, TIER_LABELS } from "@/lib/supportEvidence";
 import { formatStatus, getIncidentAge } from "@/components/command/commandData";
 import type { HazardType, Incident, Severity } from "@/lib/types";
@@ -149,6 +151,29 @@ export default function DashboardView() {
     });
     return () => controller.abort();
   }, [city.id, cityReady]);
+
+  // City-wide AQI for the header gauge, from the same stations the map shows.
+  const [cityStations, setCityStations] = useState<{
+    cityId: string;
+    stations: Array<{ pm25: number | null; pm10: number | null; stale?: boolean }>;
+  } | null>(null);
+  useEffect(() => {
+    if (!cityReady) return;
+    let cancelled = false;
+    fetch(`/api/stations?city=${city.id}`)
+      .then((response) => response.json().catch(() => null))
+      .then((data) => {
+        if (!cancelled) setCityStations({ cityId: city.id, stations: Array.isArray(data?.stations) ? data.stations : [] });
+      })
+      .catch(() => {
+        if (!cancelled) setCityStations({ cityId: city.id, stations: [] });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [city.id, cityReady]);
+  const aqiScale = AQI_SCALES[city.aqiScale];
+  const cityAqi = cityStations?.cityId === city.id ? medianStationAqi(cityStations.stations, aqiScale) : null;
 
   useEffect(() => {
     let cancelled = false;
@@ -301,11 +326,15 @@ export default function DashboardView() {
     { id: "firestore", label: t("dash_src_firestore"), ok: isFirebaseConfigured },
     { id: "maps", label: t("dash_src_maps"), ok: true },
     { id: "gemini", label: t("dash_src_gemini"), ok: integrations?.gemini },
-    {
-      id: "stations",
-      label: t("dash_src_stations").replace("{network}", city.stations.network),
-      ok: city.stations.provider === "cpcb" ? integrations?.cpcb : integrations?.waqi,
-    },
+    // One row per station feed; a city has stations when any of them answers.
+    ...city.stations.sources.map((source) => ({
+      id: `stations-${source}`,
+      label: t("dash_src_stations").replace(
+        "{network}",
+        source === "openaq" ? "OpenAQ" : source === "waqi" ? "WAQI" : "CPCB (data.gov.in)",
+      ),
+      ok: integrations?.[source],
+    })),
     { id: "earthEngine", label: t("dash_src_earth_engine"), ok: integrations?.earthEngine },
     { id: "bigQuery", label: t("dash_src_bigquery"), ok: integrations?.bigQuery },
     { id: "weather", label: t("dash_src_weather"), ok: integrations?.weather },
@@ -357,6 +386,16 @@ export default function DashboardView() {
               .replace("{city}", `${city.name}, ${city.country}`)
               .replace("{standard}", city.standards.source)}
           </p>
+        </div>
+        <div className="svd-head-gauge">
+          <AqiGauge
+            compact
+            scale={aqiScale}
+            value={cityAqi?.aqi ?? null}
+            title={t("aqi_gauge_title_city").replace("{city}", city.name)}
+            caption={cityAqi ? t("aqi_gauge_city_caption").replace("{count}", String(cityAqi.stations)) : undefined}
+            emptyText={cityStations?.cityId === city.id ? t("aqi_gauge_no_live") : t("drawer_loading")}
+          />
         </div>
         <OperatorAuth />
       </header>

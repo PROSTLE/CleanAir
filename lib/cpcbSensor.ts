@@ -1,6 +1,7 @@
 import "server-only";
 import dns from "node:dns";
 import type { StationReading } from "@/lib/stations";
+import { isSensorReadingFresh } from "@/lib/supportEvidence";
 
 dns.setDefaultResultOrder("ipv4first");
 
@@ -12,7 +13,6 @@ const PAGE_LIMIT = 1000;
 const REQUEST_ATTEMPTS = 3;
 const REQUEST_TIMEOUT_MS = 12_000;
 const RETRY_DELAY_MS = 500;
-const NCR_STATES = ["Delhi", "Haryana", "Uttar Pradesh", "Rajasthan"];
 
 type CpcbApiResponse = {
   records?: CpcbRecord[];
@@ -58,9 +58,11 @@ let cachedStations:
   | null = null;
 let warnedAboutSampleKey = false;
 // While data.gov.in is down, answer "no stations" fast instead of retrying
-// the whole ~40 s fetch on every request.
-const FAILURE_BACKOFF_MS = 2 * 60 * 1000;
+// the whole national fetch on every request.
+const FAILURE_BACKOFF_MS = 10 * 60 * 1000;
 let failedUntil = 0;
+// Every city reads the same national fetch; concurrent callers share one.
+let inFlight: Promise<GroupedStation[]> | null = null;
 
 function getApiKey() {
   const configuredKey = process.env.CPCB_API_KEY?.trim();
@@ -155,7 +157,9 @@ async function fetchCpcbPage(url: URL) {
   throw new Error("CPCB request failed.");
 }
 
-async function fetchStateRecords(apiKey: string, state: string) {
+// The whole country in one paged pass (a few thousand rows): each city then
+// keeps the stations inside its own boundary, so no state names are needed.
+async function fetchNationalRecords(apiKey: string) {
   const records: CpcbRecord[] = [];
   let offset = 0;
 
@@ -165,7 +169,6 @@ async function fetchStateRecords(apiKey: string, state: string) {
     url.searchParams.set("format", "json");
     url.searchParams.set("limit", String(PAGE_LIMIT));
     url.searchParams.set("offset", String(offset));
-    url.searchParams.set("filters[state]", state);
 
     const payload = await fetchCpcbPage(url);
     const page = Array.isArray(payload.records) ? payload.records : [];
@@ -186,24 +189,21 @@ async function fetchAllStations() {
   if (cachedStations && cachedStations.expiresAt > Date.now()) {
     return cachedStations.stations;
   }
+  if (!inFlight) inFlight = loadAllStations().finally(() => (inFlight = null));
+  return inFlight;
+}
+
+async function loadAllStations() {
 
   const apiKey = getApiKey();
   if (!apiKey) return [];
   if (Date.now() < failedUntil) throw new Error("CPCB feed unavailable (retrying shortly).");
 
-  const stateResults = await Promise.allSettled(
-    NCR_STATES.map((state) => fetchStateRecords(apiKey, state)),
-  );
-  const records = stateResults.flatMap((result, index) => {
-    if (result.status === "fulfilled") return result.value;
-
-    console.warn(
-      `Could not fetch CPCB records for ${NCR_STATES[index]}`,
-      result.reason instanceof Error ? result.reason.message : result.reason,
-    );
-    return [];
-  });
-  if (stateResults.every((result) => result.status === "rejected")) {
+  let records: CpcbRecord[];
+  try {
+    records = await fetchNationalRecords(apiKey);
+  } catch (error) {
+    console.warn("Could not fetch CPCB records", error instanceof Error ? error.message : error);
     // Back off briefly, but never cache the empty result for the full TTL.
     failedUntil = Date.now() + FAILURE_BACKOFF_MS;
     return [];
@@ -242,7 +242,7 @@ function hasUsablePollutantData(station: GroupedStation) {
   );
 }
 
-/** Every NCR station with at least one pollutant reading, cached for 15 minutes. */
+/** Every CPCB station in India with at least one pollutant reading, cached for 15 minutes. */
 export async function fetchCpcbStations(): Promise<StationReading[]> {
   try {
     const stations = await fetchAllStations();
@@ -261,6 +261,7 @@ export async function fetchCpcbStations(): Promise<StationReading[]> {
       source: "CPCB" as const,
       attribution: "CPCB via data.gov.in",
       stationName: station.stationName,
+      stale: !isSensorReadingFresh(station.lastUpdated),
     }));
   } catch (error) {
     console.warn("Could not fetch CPCB station readings", error instanceof Error ? error.message : error);

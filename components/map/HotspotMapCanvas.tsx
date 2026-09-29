@@ -4,8 +4,12 @@ import { useEffect, useRef, useState } from "react";
 import maplibregl, { type GeoJSONSource, type Map as MapLibreMap, type Marker, type Popup } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { getAQIInfo } from "@/lib/forecastEngine";
+import { AQI_SCALES, medianStationAqi } from "@/lib/aqiScales";
 import { useT } from "@/lib/languageContext";
-import type { CityConfig } from "@/lib/cities";
+import { parseSensorTimestamp } from "@/lib/supportEvidence";
+import AqiGauge from "@/components/shared/AqiGauge";
+import { formatCityTime, type CityConfig } from "@/lib/cities";
+import type { StationFeed } from "@/lib/stationFeeds";
 
 // OpenFreeMap: free, keyless vector tiles built from OpenStreetMap
 // (OpenMapTiles schema). Building footprints and roads are OSM geometry;
@@ -22,6 +26,7 @@ function homeView(city: CityConfig) {
 }
 const PITCH_3D = 55;
 const BEARING_3D = -12;
+const MIN_3D_ZOOM = 14.2;
 
 /** NASA FIRMS active-fire pixel (from /api/fires). */
 export type FireMarker = { lat: number; lng: number; brightnessK: number | null };
@@ -56,8 +61,9 @@ type Station = {
   pm25: number | null;
   pm10: number | null;
   lastUpdated: string | null;
-  source: "CPCB" | "WAQI";
+  source: StationFeed;
   attribution: string | null;
+  stale: boolean;
 };
 
 type HotspotMapCanvasProps = {
@@ -343,7 +349,13 @@ export default function HotspotMapCanvas({
       map.touchZoomRotate.disableRotation();
       map.touchPitch.disable();
     }
-    map.easeTo({ pitch: is3d ? PITCH_3D : 0, bearing: is3d ? BEARING_3D : 0, duration: 700 });
+    // OSM buildings only exist from zoom 13, so the 3D view steps in to street level.
+    map.easeTo({
+      pitch: is3d ? PITCH_3D : 0,
+      bearing: is3d ? BEARING_3D : 0,
+      ...(is3d && map.getZoom() < MIN_3D_ZOOM ? { zoom: MIN_3D_ZOOM } : {}),
+      duration: is3d && map.getZoom() < MIN_3D_ZOOM ? 1400 : 700,
+    });
   }, [ready, view]);
 
   useEffect(() => {
@@ -432,8 +444,8 @@ export default function HotspotMapCanvas({
     const markers: Marker[] = stations.map((station) => {
       const element = document.createElement("button");
       element.type = "button";
-      element.className = "map3d-station";
-      const color = station.pm25 != null ? getAQIInfo(station.pm25).color : "#9aa598";
+      element.className = station.stale ? "map3d-station is-stale" : "map3d-station";
+      const color = !station.stale && station.pm25 != null ? getAQIInfo(station.pm25).color : "#9aa598";
       element.style.setProperty("--station-color", color);
       element.setAttribute("aria-label", station.name);
       const head = document.createElement("span");
@@ -444,11 +456,16 @@ export default function HotspotMapCanvas({
       element.append(head, stem);
       element.addEventListener("click", (event) => {
         event.stopPropagation();
-        const lines = [
-          `PM2.5 ${station.pm25 != null ? `${Math.round(station.pm25)} µg/m³` : t("map3d_no_reading")}`,
-          `PM10 ${station.pm10 != null ? `${Math.round(station.pm10)} µg/m³` : t("map3d_no_reading")}`,
-          `${station.source === "WAQI" ? `${station.attribution ?? t("map3d_station_source_unknown")} · WAQI` : t("map3d_station_source")}${station.lastUpdated ? ` · ${station.lastUpdated}` : ""}`,
-        ];
+        const updatedMs = parseSensorTimestamp(station.lastUpdated);
+        const updated = updatedMs !== null ? formatCityTime(city, updatedMs) : station.lastUpdated;
+        const source = `${station.attribution ?? t("map3d_station_source_unknown")} · ${station.source}`;
+        const lines = station.stale
+          ? [t("map3d_station_stale").replace("{date}", updated ?? t("map3d_no_reading")), source]
+          : [
+              `PM2.5 ${station.pm25 != null ? `${Math.round(station.pm25)} µg/m³` : t("map3d_no_reading")}`,
+              `PM10 ${station.pm10 != null ? `${Math.round(station.pm10)} µg/m³` : t("map3d_no_reading")}`,
+              `${source}${updated ? ` · ${updated}` : ""}`,
+            ];
         pannedIdRef.current = null;
         popupRef.current
           ?.setOffset(48)
@@ -462,7 +479,7 @@ export default function HotspotMapCanvas({
         .addTo(map);
     });
     return () => markers.forEach((marker) => marker.remove());
-  }, [ready, stations, t]);
+  }, [city, ready, stations, t]);
 
   function flyToArea(lng: number, lat: number) {
     popupRef.current?.remove();
@@ -481,17 +498,40 @@ export default function HotspotMapCanvas({
     });
   }
 
+  const liveStations = stations?.filter((station) => !station.stale).length ?? 0;
+  const staleStations = (stations?.length ?? 0) - liveStations;
   const stationStatus = stationsError
     ? t("map3d_stations_unavailable_city").replace("{city}", city.name)
     : stations
-      ? t("map3d_stations_count_city").replace("{count}", String(stations.length)).replace("{city}", city.name)
+      ? staleStations > 0
+        ? t("map3d_stations_live_stale")
+            .replace("{live}", String(liveStations))
+            .replace("{stale}", String(staleStations))
+            .replace("{city}", city.name)
+        : t("map3d_stations_count_city").replace("{count}", String(liveStations)).replace("{city}", city.name)
       : t("drawer_loading");
+  const aqiScale = AQI_SCALES[city.aqiScale];
+  const cityAqi = stations ? medianStationAqi(stations, aqiScale) : null;
 
   return (
     <>
       <div className="hotspot-map-root" ref={nodeRef} />
       {showContext && ready && !failed && (
         <>
+          <div className="map3d-gauge">
+            <AqiGauge
+              compact
+              scale={aqiScale}
+              value={cityAqi?.aqi ?? null}
+              title={t("aqi_gauge_title_city").replace("{city}", city.name)}
+              caption={
+                cityAqi
+                  ? t("aqi_gauge_city_caption").replace("{count}", String(cityAqi.stations))
+                  : undefined
+              }
+              emptyText={stations || stationsError ? t("aqi_gauge_no_live") : t("drawer_loading")}
+            />
+          </div>
           <div className="map3d-legend">
             <span><i className="map3d-key is-station" />{t("map3d_legend_ground_station")}</span>
             <span><i className="map3d-key is-signal" />{t("map3d_legend_signal")}</span>

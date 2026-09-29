@@ -1,16 +1,16 @@
-# VayuSetu — hyperlocal air-pollution hotspots for BRICS capitals
+# VayuSetu — hyperlocal air-pollution hotspots for Indian cities and BRICS capitals
 
 VayuSetu turns citizen photos, ground monitoring stations, Sentinel-5P satellite data and NASA FIRMS fire detections into a neighbourhood-level hotspot map. It then helps municipal teams act on each hotspot: who to send, where the pollution is probably coming from, and who nearby needs a warning.
 
 Built on Google's AI and Cloud stack: Gemini, Earth Engine, BigQuery / BigQuery ML, Maps Platform (Maps, Places, Air Quality), and Firebase.
 
-**Live deployment:** https://cleanair-backend--cleanair-clear-streets.asia-southeast1.hosted.app (all seven capitals, redeployed 29 Sep 2026)
+**Live deployment:** https://cleanair-backend--cleanair-clear-streets.asia-southeast1.hosted.app
 
-Pick a city in the navbar (New Delhi, Beijing, Moscow, Pretoria, Abu Dhabi, Jakarta, Brasília); every page below follows it.
+Pick a city in the navbar, from two groups: **Indian cities** (New Delhi, Mumbai, Kolkata, Chennai, Bengaluru, Hyderabad) and **BRICS capitals** (Beijing, Moscow, Pretoria, Abu Dhabi, Jakarta, Brasília). Every page below follows it.
 - `/report` — citizen reporting (photo, voice note in the city's language, 13 UI languages)
-- `/map` — public hotspot map with the satellite fire layer
+- `/map` — public hotspot map with a 2D/3D city view (OpenStreetMap buildings), ground stations, the city AQI gauge and the satellite fire layer
 - `/dashboard` — municipal command center (anyone can view it; actions need operator sign-in)
-- `/forecast` — 24-hour PM2.5 forecast with model comparison, in every capital
+- `/forecast` — 24-hour PM2.5 forecast with model comparison, in every city
 - `/track/<reportId>` — live status of a single report, and the "Is it fixed?" check once it is resolved
 - `/zone/<h3CellId>` — public area page for one ~0.7 km² hexagon (open it from any map pop-up, "View this area →")
 
@@ -57,15 +57,29 @@ Every lifecycle step is appended to `incidentEvents` → 30-day recurrence →
 "Repeat hotspot" flag in the queue, on the area page and in the next work order
 ```
 
-A second path runs with no citizen input: the **ambient scan** checks every ground station in each city, together with Sentinel-5P, against its own recorded baseline. It needs two consecutive observations before it raises an incident, unless a single reading already crosses the immediate-alert level (Indian AQI "Poor" in Delhi, 1.5× the national 24-hour limit elsewhere).
+A second path runs with no citizen input: the **ambient scan** checks every ground station in each city, together with Sentinel-5P, against its own recorded baseline. It needs two consecutive observations before it raises an incident, unless a single reading already crosses the immediate-alert level (the National AQI "Poor" band in Indian cities, 1.5× the national 24-hour limit in the other BRICS capitals).
 
 ## Cities
 
-A city picker in the navbar switches every page — map, report form, dashboard, copilot, forecast — to one capital. Each city is one entry in `lib/cities.ts`: map view, OpenStreetMap boundary (`lib/cityBoundaries.ts`), station network, national 24-hour PM limits, FIRMS fire region, suggested authorities, work-order language, voice-note language and time zone.
+A city picker in the navbar switches every page — map, report form, dashboard, copilot, forecast — to one city. It lists two groups, **Indian cities** and **BRICS capitals** (`CITY_GROUPS` in `lib/cities.ts`). Each city is one entry in `lib/cities.ts`: group, map view, OpenStreetMap boundary (`lib/cityBoundaries.ts`), station feeds, national 24-hour limits, AQI scale, FIRMS fire region, suggested authorities, work-order language, voice-note language and time zone.
+
+#### Indian cities
+
+| City | Boundary (OpenStreetMap) | Work-order language | Suggested agencies |
+| --- | --- | --- | --- |
+| New Delhi | Delhi NCT | Hindi | MCD, DPCC, Delhi Traffic Police |
+| Mumbai | Mumbai City + Mumbai Suburban districts | Marathi | BMC, MPCB, Mumbai Traffic Police |
+| Kolkata | Kolkata Municipal Corporation | Bengali | KMC, WBPCB, Kolkata Traffic Police |
+| Chennai | Greater Chennai Corporation | Tamil | GCC, TNPCB, Greater Chennai Traffic Police |
+| Bengaluru | BBMP area | Kannada | GBA, KSPCB, Bengaluru Traffic Police |
+| Hyderabad | GHMC area | Telugu | GHMC, TGPCB, Hyderabad Traffic Police |
+
+All six use India's NAAQS 24-hour limits (PM2.5 60, PM10 100, NO₂ 80, SO₂ 80 µg/m³) and the National AQI thresholds for ambient alerts. Their stations merge OpenAQ, WAQI and CPCB (below).
+
+#### BRICS capitals
 
 | City | Ground stations | Limits used (24 h, PM2.5 / PM10 µg/m³) |
 | --- | --- | --- |
-| New Delhi | CPCB / DPCC via data.gov.in | India NAAQS 60 / 100 (plus NO₂, SO₂) |
 | Beijing | China national network via WAQI | GB 3095-2012 Grade II 75 / 150 |
 | Moscow | Mosecomonitoring via WAQI | SanPiN 1.2.3685-21 35 / 60 |
 | Pretoria | SAAQIS and local stations via WAQI | South Africa NAAQS 40 / 75 |
@@ -73,9 +87,33 @@ A city picker in the navbar switches every page — map, report form, dashboard,
 | Jakarta | Jakarta stations and sensors via WAQI | PP 22/2021 55 / 75 |
 | Brasília | Distrito Federal sensors via WAQI (sparse) | CONAMA 491/2018 PI-2 50 / 100 |
 
-A capital is listed only if a public real-time station feed covers it. Cairo and Addis Ababa are left out: their only live monitors were US Embassy stations, offline since March 2025. Tehran is left out because its public feed has not updated since December 2025. WAQI lists government stations first; citizen low-cost sensors only top up cities with fewer than 8 official stations.
+A capital is listed only if a public real-time station feed covers it. Cairo and Addis Ababa are left out: their only live monitors were US Embassy stations, offline since March 2025. Tehran is left out because its public feed has not updated since December 2025. WAQI publishes US AQI sub-indices, not concentrations, so outside India the gas limits are null and the industrial check relies on Sentinel-5P NO₂.
 
-WAQI publishes US-EPA AQI sub-indices, not concentrations. `lib/usAqi.ts` converts PM2.5 and PM10 back to µg/m³ with the 2012 EPA breakpoints that WAQI documents. Gas sub-indices are not converted, so outside Delhi the industrial check relies on Sentinel-5P NO₂. Only Delhi has curated known-source lists and forecast zones; other cities forecast at their live stations, without Delhi's diurnal profile.
+The operator confirms every routing; the agency is always a suggestion.
+
+### Where station data comes from
+
+No station name or coordinate is typed into this repo. Each city merges the feeds listed in its config at runtime (`lib/stations.ts`): Indian cities use all three, the BRICS capitals use WAQI.
+
+| Feed | What it carries | Variable |
+| --- | --- | --- |
+| **OpenAQ v3** (`lib/server/openaq.ts`) | CPCB, state-board and low-cost monitors, with the coordinates each owner publishes, in µg/m³ | `OPENAQ_API_KEY` |
+| **WAQI** (`lib/server/waqi.ts`) | CPCB and state-board stations relayed as US AQI sub-indices; `lib/usAqi.ts` converts PM2.5 and PM10 back to µg/m³ with the 2012 EPA breakpoints | `WAQI_API_TOKEN` |
+| **CPCB via data.gov.in** (`lib/cpcbSensor.ts`) | The national real-time feed, all seven pollutants; one national pass filtered by each city's boundary | `CPCB_API_KEY` |
+
+When two feeds relay the same monitor (within 250 m), the live reading wins, then the newer one, then OpenAQ → WAQI → CPCB. Reference monitors come first; low-cost sensors only top up cities with fewer than 8 live monitors.
+
+**Live vs offline.** A station whose latest reading is older than 24 hours is kept on the map as *offline*, with its last-reported date and no values. Offline stations never feed evidence, ambient alerts, the AQI gauge, BigQuery or the ARIMA model. They can still anchor a forecast zone, which then runs on Google's modelled history and is labelled "Modelled data".
+
+As of 29 Sep 2026: data.gov.in times out, and WAQI's relay has live stations only for Delhi and Kolkata (Mumbai, Chennai, Bengaluru and Hyderabad stopped updating on 23 Jun 2026). OpenAQ is the feed expected to cover the other four; its live coverage is only known once `OPENAQ_API_KEY` is set.
+
+### AQI gauge
+
+`components/shared/AqiGauge.tsx` draws a 0–500 dial in six colour bands (`lib/aqiScales.ts`): India's National AQI (CPCB 2014 breakpoints, `lib/indiaAqi.ts`) in Indian cities, and the US EPA AQI (`lib/usAqi.ts`) in the BRICS capitals, the index their WAQI stations publish. The map and dashboard show the city value as the median of live stations; the area page shows the nearest live station. The official AQI uses 24-hour averages; these are estimates from the latest PM2.5 and PM10 and are labelled that way. With no live station, the dial stays empty and says so.
+
+### 3D city view
+
+The public map's 3D switch tilts the camera and raises OpenStreetMap buildings (OpenFreeMap vector tiles) for whichever city is selected, stepping in to street level (zoom 14) because buildings only exist from zoom 13. Only Delhi has curated known-source lists, monitored areas and forecast zones; the other cities forecast at their station locations, without Delhi's diurnal profile.
 
 ## Features
 
@@ -128,7 +166,7 @@ New since the Code for Communities build, all additive: no existing screen, rule
 - **`incidentEvents`:** an append-only history of each incident's steps (promoted, reopened, dispatched, resolved, fix confirmed, disputed). It is written after the promotion transaction, the ambient scan and operator actions, never blocking them.
 - **Modelled forecast fallback:** a separate BigQuery table, `google_aq_history`, holds Google Air Quality hourly PM history.
   - It is used only when a station has fewer than 12 hourly readings, and is labelled "Modelled data" on every page.
-  - It was backfilled for all 49 forecast zones on 28 Sep 2026; other zones are fetched on first view.
+  - It was backfilled on 28 Sep 2026 for the forecast zones of that time; zones in the other cities are fetched on first view, or in bulk with `GET /api/cron/backfill-history`.
 - **Honest outage states:** when a station feed is down, the area page says so instead of "no station nearby"; when Gemini is unavailable, it shows the last saved summary with its time.
 
 **New routes:**
@@ -167,7 +205,7 @@ New since the Code for Communities build, all additive: no existing screen, rule
 
 ## Tech stack
 
-Next.js 16 (App Router, TypeScript) · React 19 · Firebase App Hosting, Firestore, Auth, App Check · Gemini 3.5 Flash (3.1 Flash-Lite fallback) · Earth Engine (Sentinel-5P NRTI/OFFL, NASA FIRMS) · BigQuery + BigQuery ML · Google Maps JS, Places API (New), Air Quality API · Cloud Speech-to-Text · CPCB via data.gov.in · World Air Quality Index (WAQI) · Open-Meteo · OpenFreeMap / OpenStreetMap · Twilio WhatsApp · H3.
+Next.js 16 (App Router, TypeScript) · React 19 · Firebase App Hosting, Firestore, Auth, App Check · Gemini 3.5 Flash (3.1 Flash-Lite fallback) · Earth Engine (Sentinel-5P NRTI/OFFL, NASA FIRMS) · BigQuery + BigQuery ML · Google Maps JS, Places API (New), Air Quality API · Cloud Speech-to-Text · OpenAQ · CPCB via data.gov.in · World Air Quality Index (WAQI) · Open-Meteo · OpenFreeMap / OpenStreetMap · Twilio WhatsApp · H3.
 
 ---
 
@@ -190,7 +228,8 @@ Every integration is optional at runtime: a missing one shows as *not configured
 | Firebase (client + Admin) | Reports, incidents, sign-in | `NEXT_PUBLIC_FIREBASE_*`, `FIREBASE_SERVICE_ACCOUNT_KEY` | [Firebase console](https://console.firebase.google.com/) → Project settings → General (web config) and Service accounts (Admin key) |
 | Gemini | Photo classification, copilot, work orders | `GEMINI_API_KEY` | [Google AI Studio](https://aistudio.google.com/app/apikey) |
 | CPCB (Delhi stations) | Delhi ground stations | `CPCB_API_KEY` | [data.gov.in](https://data.gov.in/) → sign in → My Account → API key |
-| WAQI (other capitals) | Stations for Beijing, Moscow, Pretoria, Abu Dhabi, Jakarta, Brasília | `WAQI_API_TOKEN` | [aqicn.org token](https://aqicn.org/data-platform/token/) (free, non-commercial) |
+| OpenAQ | Ground stations in every city (CPCB, state boards, low-cost sensors) | `OPENAQ_API_KEY` | [explore.openaq.org](https://explore.openaq.org) → sign in → Account → API key (free) |
+| WAQI | Ground stations relayed by the World Air Quality Index; the only feed for the BRICS capitals | `WAQI_API_TOKEN` | [aqicn.org token](https://aqicn.org/data-platform/token/) (free, non-commercial) |
 | Earth Engine | Sentinel-5P NO₂ / aerosol, NASA FIRMS fires | Uses `FIREBASE_SERVICE_ACCOUNT_KEY`; set `EARTH_ENGINE_PROJECT_ID` | [Register project](https://code.earthengine.google.com/register) · [Enable API](https://console.cloud.google.com/apis/library/earthengine.googleapis.com) · [Service accounts](https://console.cloud.google.com/iam-admin/serviceaccounts) · [Service-account guide](https://developers.google.com/earth-engine/guides/service_account) |
 | BigQuery | Live station history, forecasts, ARIMA_PLUS | `BIGQUERY_PROJECT_ID` (authenticates with `FIREBASE_SERVICE_ACCOUNT_KEY`) | [Enable API](https://console.cloud.google.com/apis/library/bigquery.googleapis.com) · [BigQuery console](https://console.cloud.google.com/bigquery) |
 | Cloud Scheduler | Runs `/api/cron/tick` every 30 min | `CRON_SECRET` (any long random string) | [Enable API](https://console.cloud.google.com/apis/library/cloudscheduler.googleapis.com) |
@@ -246,8 +285,9 @@ To let reporters answer the fix-check by replying **FIXED** or **STILL**, set th
 ## Testing & evaluation
 
 ```bash
-npm test                 # 43 unit tests: attribution, forecast/backtest, IST and per-city time zones,
-                         # city boundaries, WAQI AQI→µg/m³ conversion, H3 cells, evidence rules
+npm test                 # 51 unit tests: attribution, forecast/backtest, IST and per-city time zones,
+                         # city boundaries and groups, WAQI AQI→µg/m³ conversion, India and US AQI, OpenAQ parsing,
+                         # station-feed merging, H3 cells, evidence rules
                          # (incl. stale-reading rejection), fusion, classifier parsing, EXIF,
                          # 30-day recurrence, response targets, resident fix-check states
 npm run lint
@@ -260,13 +300,14 @@ Quick live checks once the server runs (`npm run build && npm start`):
 
 ```bash
 curl localhost:3000/api/system-status                 # which integrations are configured
-curl "localhost:3000/api/stations?city=beijing"       # live stations (delhi, beijing, moscow, pretoria,
-                                                      #   abu-dhabi, jakarta, brasilia)
-curl "localhost:3000/api/fires?city=brasilia"         # FIRMS fires in the city's upwind region
-curl "localhost:3000/api/scan-ambient?city=moscow"    # sensor/satellite-only hotspot scan (writes to Firestore)
-curl localhost:3000/api/zone/8831aa42b7fffff          # area summary (Temple of Heaven, Beijing)
+curl "localhost:3000/api/stations?city=mumbai"        # stations, live and offline (delhi, mumbai, kolkata,
+                                                      #   chennai, bengaluru, hyderabad, beijing, moscow,
+                                                      #   pretoria, abu-dhabi, jakarta, brasilia)
+curl "localhost:3000/api/fires?city=chennai"          # FIRMS fires in the city's upwind region
+curl "localhost:3000/api/scan-ambient?city=kolkata"   # sensor/satellite-only hotspot scan (writes to Firestore)
+curl localhost:3000/api/zone/883da1149bfffff          # area summary (Anand Vihar, Delhi)
 curl "localhost:3000/api/zones/recurrence?cells=883da11415fffff"   # 30-day history for one or more cells
-curl "localhost:3000/api/forecast?h3CellId=8831aa42b7fffff"        # dataSource: live | archive | modelled
+curl "localhost:3000/api/forecast?h3CellId=883da1149bfffff"        # dataSource: live | archive | modelled
 ```
 
 For the classifier evaluation, put labelled photos in `eval/photos/<label>/` (see `eval/README.md`). The results appear on the dashboard's *Model quality* card.
@@ -274,9 +315,9 @@ For the classifier evaluation, put labelled photos in `eval/photos/<label>/` (se
 ## Known limitations
 
 - **Forecast data:** the forecast uses live station history once `/api/cron/tick` has been collecting it (the live table started filling on 28 Sep 2026). Until a station has 12 hourly readings, the forecast uses Google Air Quality modelled history, shown as "Modelled data", never as live. Delhi would use the 2015–2020 Kaggle archive first if it were loaded; it is not loaded in the live deployment. ARIMA_PLUS trains only on station readings.
-- **WAQI:** free for non-commercial use, with attribution to WAQI and the originating agency (shown in station pop-ups). Some WAQI stations are low-cost sensors, especially in Jakarta and Brasília.
+- **Station feeds:** WAQI is free for non-commercial use with attribution; OpenAQ data is CC BY 4.0 unless a location's licence says otherwise. The owning agency is shown in station pop-ups. The OpenAQ free tier allows 60 requests a minute, so the app throttles itself to 50 and caches each city for 20 minutes; a cold start for all six cities can take a couple of minutes.
 - **WhatsApp bot:** reports from any city are filed by their coordinates, but the bot's messages are English/Hindi only.
-- **Outages:** when data.gov.in is down, Delhi station lookups fail after about 40 s and then fail fast for 2 minutes; the UI shows the feed as unavailable.
+- **Outages:** each station feed has a time budget (OpenAQ 30 s, WAQI 20 s, CPCB 10 s). A feed that misses it keeps loading in the background and fills its cache for the next request. When data.gov.in is down, CPCB fails fast for 10 minutes.
 - **ARIMA timing:** ARIMA_PLUS needs about 7 days of live readings before the first training run.
 - **Attribution is a screening aid**, not a dispersion model. Sensor and satellite checks are thresholds on public data, not calibrated source apportionment.
 - **WhatsApp limits:** outside the 24-hour session window, WhatsApp requires approved message templates. Failed sends are recorded and never block an operator action.

@@ -23,6 +23,11 @@ import {
   parseSensorTimestamp,
 } from "@/lib/supportEvidence";
 import { PM10_BREAKPOINTS, PM25_BREAKPOINTS, usAqiToConcentration } from "@/lib/usAqi";
+import { AQI_SCALES, medianStationAqi } from "@/lib/aqiScales";
+import { indiaAqiFromPm } from "@/lib/indiaAqi";
+import { concentrationToUsAqi } from "@/lib/usAqi";
+import { applyLatest, openAqPollutant } from "@/lib/openaqParse";
+import { mergeStationFeeds } from "@/lib/stationMerge";
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
@@ -119,7 +124,7 @@ describe("upwind attribution", () => {
 // ─── cities ──────────────────────────────────────────────────────────────────
 
 describe("cities", () => {
-  it("places each capital's centre inside its own boundary", () => {
+  it("places each city's centre inside its own boundary", () => {
     for (const city of CITIES) {
       assert.equal(cityForPoint(city.center.lat, city.center.lng)?.id, city.id, city.name);
     }
@@ -129,11 +134,26 @@ describe("cities", () => {
     // Noida (Uttar Pradesh) is outside Delhi NCT but still uses Delhi's data.
     assert.equal(cityForPoint(28.5355, 77.391), null);
     assert.equal(resolveCityForPoint(28.5355, 77.391)?.id, "delhi");
+    // Arabian Sea west of Mumbai, and Navi Mumbai across the harbour.
+    assert.equal(cityForPoint(18.95, 72.6), null);
+    assert.equal(cityForPoint(19.033, 73.029), null);
+    assert.equal(resolveCityForPoint(19.033, 73.029)?.id, "mumbai");
+    // Bay of Bengal off Chennai.
+    assert.equal(cityForPoint(13.08, 80.45), null);
     // Open sea north of Jakarta (Kepulauan Seribu extent was trimmed).
     assert.equal(cityForPoint(-5.8, 106.6), null);
     // Nowhere near any monitored city.
     assert.equal(resolveCityForPoint(0, 0), null);
     assert.equal(isInOperationalRegion(Number.NaN, 77.2), false);
+  });
+
+  it("groups six Indian cities and six other BRICS capitals", () => {
+    const india = CITIES.filter((city) => city.group === "india");
+    const brics = CITIES.filter((city) => city.group === "brics");
+    assert.equal(india.length, 6);
+    assert.equal(brics.length, 6);
+    assert.ok(india.every((city) => city.countryCode === "in" && city.aqiScale === "india"));
+    assert.ok(brics.every((city) => city.countryCode !== "in" && city.aqiScale === "us"));
   });
 
   it("closes every boundary ring for GeoJSON", () => {
@@ -306,5 +326,122 @@ describe("EXIF integrity metadata", () => {
   it("returns empty metadata when there is none", () => {
     assert.deepEqual(parseExif(load("no-exif.jpg")), { takenAt: null, lat: null, lng: null });
     assert.deepEqual(parseExif(new Uint8Array([1, 2, 3, 4]).buffer), { takenAt: null, lat: null, lng: null });
+  });
+});
+
+// ─── station feeds and AQI ───────────────────────────────────────────────────
+
+describe("India National AQI", () => {
+  it("interpolates PM2.5 and PM10 sub-indices and takes the higher", () => {
+    assert.equal(indiaAqiFromPm(30, null)?.aqi, 50);
+    assert.equal(indiaAqiFromPm(60, null)?.aqi, 100);
+    assert.equal(indiaAqiFromPm(75, null)?.aqi, 150);
+    assert.equal(indiaAqiFromPm(250, null)?.aqi, 400);
+    assert.equal(indiaAqiFromPm(900, null)?.aqi, 500);
+    const pm10Led = indiaAqiFromPm(40, 300);
+    assert.equal(pm10Led?.aqi, 250);
+    assert.equal(pm10Led?.dominant, "PM10");
+    assert.equal(pm10Led?.info.category, "aqi_category_poor");
+    assert.equal(indiaAqiFromPm(null, null), null);
+  });
+
+  it("computes the US EPA AQI for the BRICS capitals", () => {
+    assert.equal(concentrationToUsAqi(12, PM25_BREAKPOINTS), 50);
+    assert.equal(concentrationToUsAqi(35.4, PM25_BREAKPOINTS), 100);
+    assert.equal(concentrationToUsAqi(12.05, PM25_BREAKPOINTS), 51);
+    const beijing = AQI_SCALES.us.fromPm(55.4, 20);
+    assert.equal(beijing?.aqi, 150);
+    assert.equal(beijing?.info.category, "aqi_us_usg");
+    assert.equal(AQI_SCALES.us.fromPm(null, null), null);
+    assert.equal(medianStationAqi([{ pm25: 12, pm10: null }], AQI_SCALES.us)?.aqi.info.category, "aqi_us_good");
+  });
+
+  it("uses the median of live stations and ignores stale ones", () => {
+    const city = medianStationAqi([
+      { pm25: 30, pm10: null },
+      { pm25: 60, pm10: null },
+      { pm25: 200, pm10: null },
+      { pm25: 500, pm10: null, stale: true },
+    ]);
+    assert.equal(city?.aqi.aqi, 100);
+    assert.equal(city?.stations, 3);
+    assert.equal(medianStationAqi([{ pm25: null, pm10: null }]), null);
+  });
+});
+
+describe("OpenAQ parsing", () => {
+  it("accepts µg/m³ in either spelling and skips ppm gases", () => {
+    assert.deepEqual(openAqPollutant({ name: "pm25", units: "µg/m³" }), { key: "pm25", scale: 1 });
+    assert.deepEqual(openAqPollutant({ name: "no2", units: "μg/m³" }), { key: "no2", scale: 1 });
+    assert.equal(openAqPollutant({ name: "no2", units: "ppm" }), null);
+    assert.deepEqual(openAqPollutant({ name: "co", units: "µg/m³" }), { key: "co", scale: 0.001 });
+    assert.equal(openAqPollutant({ name: "temperature", units: "c" }), null);
+  });
+
+  it("fills values from the latest endpoint and marks old ones stale", () => {
+    const now = Date.parse("2026-09-29T12:00:00Z");
+    const location = {
+      id: 1,
+      sensors: [
+        { id: 10, parameter: { name: "pm25", units: "µg/m³" } },
+        { id: 11, parameter: { name: "pm10", units: "µg/m³" } },
+      ],
+    };
+    const base = () => ({
+      stationName: "Test", lat: 19, lng: 72.9, distanceKm: 0, pm25: null, pm10: null, no2: null, so2: null,
+      co: null, nh3: null, ozone: null, lastUpdated: null, source: "OpenAQ" as const, attribution: null, stale: true,
+    });
+    const live = applyLatest(base(), location, [
+      { sensorsId: 10, value: 42.44, datetime: { utc: "2026-09-29T11:00:00Z" } },
+      { sensorsId: 11, value: 90, datetime: { utc: "2026-09-20T11:00:00Z" } },
+    ], now);
+    assert.equal(live.pm25, 42.4);
+    assert.equal(live.pm10, null);
+    assert.equal(live.stale, false);
+    assert.equal(live.lastUpdated, "2026-09-29T11:00:00.000Z");
+    const old = applyLatest(base(), location, [{ sensorsId: 10, value: 42, datetime: { utc: "2026-06-23T10:00:00Z" } }], now);
+    assert.equal(old.stale, true);
+    assert.equal(old.pm25, null);
+  });
+});
+
+describe("station feed merge", () => {
+  const station = (source: "OpenAQ" | "WAQI" | "CPCB", lastUpdated: string, stale = false, lng = 72.9) => ({
+    stationName: source, lat: 19, lng, distanceKm: 0, pm25: stale ? 99 : 40, pm10: null, no2: null, so2: null,
+    co: null, nh3: null, ozone: null, lastUpdated, source, attribution: null, stale,
+  });
+
+  it("keeps one copy of a monitor two feeds relay, preferring live then newer", () => {
+    const merged = mergeStationFeeds([
+      [station("OpenAQ", "2026-06-23T10:00:00Z", true)],
+      [station("WAQI", "2026-09-29T10:00:00Z")],
+    ]);
+    assert.equal(merged.length, 1);
+    assert.equal(merged[0].source, "WAQI");
+    const newer = mergeStationFeeds([[station("OpenAQ", "2026-09-29T09:00:00Z")], [station("WAQI", "2026-09-29T10:00:00Z")]]);
+    assert.equal(newer[0].source, "WAQI");
+    const tie = mergeStationFeeds([[station("OpenAQ", "2026-09-29T10:00:00Z")], [station("WAQI", "2026-09-29T10:00:00Z")]]);
+    assert.equal(tie[0].source, "OpenAQ");
+  });
+
+  it("hides an offline pin a few hundred metres from a live station of another feed", () => {
+    // ~330 m apart: the same monitor as placed by two feeds.
+    const merged = mergeStationFeeds([
+      [station("OpenAQ", "2026-09-24T10:00:00Z", true, 72.9)],
+      [station("WAQI", "2026-09-29T10:00:00Z", false, 72.9031)],
+    ]);
+    assert.deepEqual(merged.map((item) => item.source), ["WAQI"]);
+    // Two live stations that far apart are both kept.
+    const both = mergeStationFeeds([
+      [station("OpenAQ", "2026-09-29T09:00:00Z", false, 72.9)],
+      [station("WAQI", "2026-09-29T10:00:00Z", false, 72.9031)],
+    ]);
+    assert.equal(both.length, 2);
+  });
+
+  it("keeps separate monitors and never shows a stale value", () => {
+    const merged = mergeStationFeeds([[station("OpenAQ", "2026-06-23T10:00:00Z", true), station("OpenAQ", "2026-09-29T10:00:00Z", false, 73.0)]]);
+    assert.equal(merged.length, 2);
+    assert.equal(merged[0].pm25, null);
   });
 });

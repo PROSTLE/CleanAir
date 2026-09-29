@@ -3,11 +3,11 @@ import "server-only";
 import type { CityConfig } from "@/lib/cities";
 import { isInCity } from "@/lib/cities";
 import type { StationReading } from "@/lib/stations";
+import { SENSOR_READING_MAX_AGE_HOURS } from "@/lib/supportEvidence";
 import { PM10_BREAKPOINTS, PM25_BREAKPOINTS, usAqiToConcentration } from "@/lib/usAqi";
 
-// World Air Quality Index (WAQI) — the one free real-time feed that carries
-// the government networks of every non-Indian capital we monitor (CNEMC for
-// Beijing, Mosecomonitoring for Moscow, SAAQIS for Pretoria, ...). Token from
+// World Air Quality Index (WAQI): relays CPCB, state-board and other
+// agency stations with the coordinates each agency publishes. Token from
 // https://aqicn.org/data-platform/token/ ; free for non-commercial use, with
 // attribution to WAQI and the originating agency.
 //
@@ -21,9 +21,6 @@ const CACHE_TTL_MS = 15 * 60 * 1000;
 const REQUEST_TIMEOUT_MS = 10_000;
 const MAX_STATIONS_PER_CITY = 60;
 const MIN_OFFICIAL_STATIONS = 8;
-// WAQI keeps listing stations that stopped reporting (all of Tehran has
-// been frozen since Dec 2025); older readings are dropped, not shown as live.
-const MAX_READING_AGE_HOURS = 48;
 const FEED_CONCURRENCY = 6;
 const BOUNDS_PAD_DEG = 0.1;
 
@@ -73,10 +70,13 @@ async function fetchStation(uid: number, fallbackName: string): Promise<StationR
   const [lat, lng] = data.city?.geo ?? [];
   if (typeof lat !== "number" || typeof lng !== "number") return null;
   const updatedMs = data.time?.iso ? Date.parse(data.time.iso) : NaN;
-  if (!Number.isFinite(updatedMs) || Date.now() - updatedMs > MAX_READING_AGE_HOURS * 3_600_000) return null;
-  const pm25 = usAqiToConcentration(data.iaqi?.pm25?.v, PM25_BREAKPOINTS);
-  const pm10 = usAqiToConcentration(data.iaqi?.pm10?.v, PM10_BREAKPOINTS);
-  if (pm25 === null && pm10 === null) return null;
+  if (!Number.isFinite(updatedMs)) return null;
+  // WAQI keeps listing stations that stopped reporting. Those keep their
+  // position and last-reported time, but no values: never shown as live.
+  const stale = Date.now() - updatedMs > SENSOR_READING_MAX_AGE_HOURS * 3_600_000;
+  const pm25 = stale ? null : usAqiToConcentration(data.iaqi?.pm25?.v, PM25_BREAKPOINTS);
+  const pm10 = stale ? null : usAqiToConcentration(data.iaqi?.pm10?.v, PM10_BREAKPOINTS);
+  if (!stale && pm25 === null && pm10 === null) return null;
   const agency = data.attributions
     ?.map((item) => item.name?.trim())
     .find((name) => name && !/world air quality index/i.test(name));
@@ -96,6 +96,7 @@ async function fetchStation(uid: number, fallbackName: string): Promise<StationR
     lastUpdated: data.time?.iso ?? null,
     source: "WAQI",
     attribution: agency ?? null,
+    stale,
   };
 }
 
@@ -114,7 +115,7 @@ async function loadCityStations(city: CityConfig): Promise<StationReading[]> {
   };
 
   // Government stations first; citizen low-cost sensors only top up cities
-  // where the official network is thin (e.g. Jakarta, Brasília).
+  // where the official network is thin.
   const official = await list("official");
   const officialInside = official.filter((item) => isInCity(city, Number(item.lat), Number(item.lon))).length;
   const extra =

@@ -23,8 +23,9 @@ export async function GET() {
     checkedAt: new Date().toISOString(),
     integrations: {
       gemini: configured("GEMINI_API_KEY"),
+      // Station feeds, merged per city: any one of them gives a city stations.
+      openaq: configured("OPENAQ_API_KEY"),
       cpcb: configured("CPCB_API_KEY"),
-      // Station feed for every capital except Delhi.
       waqi: configured("WAQI_API_TOKEN"),
       // Open-Meteo needs no key.
       weather: true,

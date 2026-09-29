@@ -319,3 +319,110 @@
 .sv-hud-icon {
   color: var(--sv-green-dark);
 }
+
+/* ── AQI gauge: India's National AQI on a 0–500 dial ─────────────────────── */
+.aqi-gauge {
+  margin: 0;
+  display: grid;
+  gap: 4px;
+  justify-items: center;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.aqi-gauge-title {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.aqi-gauge-dial {
+  width: 100%;
+  max-width: 220px;
+}
+
+.aqi-gauge-dial svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.aqi-gauge-tick {
+  font-size: 8.5px;
+  fill: var(--muted);
+}
+
+.aqi-gauge-needle {
+  transform-box: view-box;
+  transform-origin: 100px 100px;
+  transition: transform 700ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.aqi-gauge-needle line {
+  stroke: var(--ink);
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+
+.aqi-gauge-pivot {
+  fill: var(--ink);
+}
+
+.aqi-gauge-reading {
+  display: grid;
+  gap: 2px;
+  justify-items: center;
+  margin-top: -6px;
+}
+
+.aqi-gauge-reading strong {
+  font-size: 2rem;
+  line-height: 1;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.aqi-gauge-category {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.86rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.aqi-gauge-category i {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+
+.aqi-gauge-reading small,
+.aqi-gauge-caption,
+.aqi-gauge-empty {
+  font-size: 0.74rem;
+  color: var(--muted);
+  margin: 0;
+  max-width: 28ch;
+}
+
+.aqi-gauge-empty {
+  font-size: 0.82rem;
+}
+
+.aqi-gauge.is-compact .aqi-gauge-dial {
+  max-width: 150px;
+}
+
+.aqi-gauge.is-compact .aqi-gauge-reading strong {
+  font-size: 1.5rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .aqi-gauge-needle {
+    transition: none;
+  }
+}

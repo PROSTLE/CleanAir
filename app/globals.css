@@ -639,6 +639,20 @@ a {
   backdrop-filter: blur(6px);
 }
 
+.map3d-gauge {
+  position: absolute;
+  top: 58px;
+  left: 12px;
+  z-index: 2;
+  width: 176px;
+  padding: 10px 10px 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(251, 251, 247, 0.95);
+  box-shadow: var(--shadow-sm);
+  backdrop-filter: blur(6px);
+}
+
 .map3d-legend span {
   display: flex;
   align-items: center;
@@ -742,6 +756,17 @@ a {
   border-radius: 50%;
   background: var(--station-color);
   box-shadow: 0 0 0 4px color-mix(in srgb, var(--station-color) 25%, transparent);
+}
+
+/* A monitor that hasn't reported in the last day: grey, dashed, no value. */
+.map3d-station.is-stale .map3d-station-head {
+  border-style: dashed;
+  color: var(--muted);
+  box-shadow: none;
+}
+
+.map3d-station.is-stale {
+  opacity: 0.75;
 }
 
 .map3d-signal {

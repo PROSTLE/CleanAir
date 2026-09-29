@@ -37,6 +37,17 @@
     display: none;
   }
 
+  /* The city AQI gauge stays, just smaller and without its caption. */
+  .map3d-gauge {
+    width: 132px;
+    padding: 8px 8px 6px;
+  }
+
+  .map3d-gauge .aqi-gauge-caption,
+  .map3d-gauge .aqi-gauge-reading small {
+    display: none;
+  }
+
   /* Map header: keep the hotspot count and the fire toggle, hide the
      "OpenStreetMap layer" caption that crowded them. */
   .map-status-card strong {

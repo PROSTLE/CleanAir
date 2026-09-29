@@ -1,19 +1,22 @@
 import { NextResponse } from "next/server";
 import { findCity } from "@/lib/cities";
-import { fetchCityStationReadings } from "@/lib/stations";
+import { isOpenAqConfigured } from "@/lib/server/openaq";
+import { isWaqiConfigured } from "@/lib/server/waqi";
+import { fetchCityStationDirectory } from "@/lib/stations";
 
 export const runtime = "nodejs";
 
 /**
  * Ground monitoring stations inside one city, at the coordinates their feed
- * publishes: CPCB (data.gov.in) for Delhi, WAQI for the other capitals.
- * Feeds are cached server-side for 15 minutes.
+ * publishes, merged from the city's feeds (OpenAQ, WAQI, CPCB). Stations that
+ * haven't reported in the last day are included with `stale: true`, their
+ * last-reported time and no values. Feeds are cached server-side.
  */
 export async function GET(request: Request) {
   const city = findCity(new URL(request.url).searchParams.get("city") ?? "delhi");
   if (!city) return NextResponse.json({ stations: [], error: "Unknown city." }, { status: 400 });
 
-  const stations = (await fetchCityStationReadings(city)).map((station) => ({
+  const stations = (await fetchCityStationDirectory(city)).map((station) => ({
     name: station.stationName,
     lat: station.lat,
     lng: station.lng,
@@ -22,13 +25,18 @@ export async function GET(request: Request) {
     lastUpdated: station.lastUpdated,
     source: station.source,
     attribution: station.attribution,
+    stale: station.stale,
   }));
 
   if (stations.length === 0) {
-    const reason =
-      city.stations.provider === "waqi" && !process.env.WAQI_API_TOKEN?.trim()
-        ? "WAQI_API_TOKEN is not set."
-        : `${city.stations.network} returned no stations.`;
+    const sources = city.stations.sources;
+    const missing = [
+      sources.includes("openaq") && !isOpenAqConfigured() && "OPENAQ_API_KEY",
+      sources.includes("waqi") && !isWaqiConfigured() && "WAQI_API_TOKEN",
+    ].filter(Boolean);
+    const reason = missing.length
+      ? `No station feed answered for ${city.name}; ${missing.join(" and ")} ${missing.length > 1 ? "are" : "is"} not set.`
+      : `No station feed answered for ${city.name}.`;
     return NextResponse.json({ stations: [], error: reason }, { status: 503 });
   }
 

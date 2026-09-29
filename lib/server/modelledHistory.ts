@@ -11,7 +11,7 @@ import {
   queryGoogleHistory,
 } from "@/lib/server/bigqueryLive";
 import { getAirQualityHistory, isAirQualityConfigured } from "@/lib/server/googleAirQuality";
-import { fetchCityStationReadings } from "@/lib/stations";
+import { fetchCityStationDirectory } from "@/lib/stations";
 
 // Modelled PM history for forecast zones whose ground station has not yet
 // built up enough hourly readings in BigQuery (or whose feed is down).
@@ -89,9 +89,10 @@ async function forecastZones(city: CityConfig): Promise<Point[]> {
   if (city.id === "delhi") {
     return DELHI_H3_CELLS.map((cell) => ({ h3CellId: cell.h3CellId, label: cell.label, lat: cell.lat, lng: cell.lng }));
   }
-  const stations = await fetchCityStationReadings(city);
-  return stations
-    .filter((station) => station.pm25 !== null)
+  const stations = await fetchCityStationDirectory(city);
+  return [...stations]
+    .sort((a, b) => Number(a.stale) - Number(b.stale))
+    .filter((station) => station.pm25 !== null || station.stale)
     .map((station) => ({
       h3CellId: latLngToCell(station.lat, station.lng, H3_RESOLUTION),
       label: station.stationName,
