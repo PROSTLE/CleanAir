@@ -3,7 +3,6 @@
 import { useEffect, useRef, useState } from "react";
 import maplibregl, { type GeoJSONSource, type Map as MapLibreMap, type Marker, type Popup } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
-import { getAQIInfo } from "@/lib/forecastEngine";
 import { AQI_SCALES, medianStationAqi } from "@/lib/aqiScales";
 import { useT } from "@/lib/languageContext";
 import { parseSensorTimestamp } from "@/lib/supportEvidence";
@@ -17,8 +16,9 @@ import type { StationFeed } from "@/lib/stationFeeds";
 // OpenMapTiles default where they are not.
 const STYLE_URL = "https://tiles.openfreemap.org/styles/positron";
 
-// The ambient-scan areas are ~1 km centroids (see city.monitoredAreas), so
-// they are drawn as a soft ring of that size rather than as a precise pin.
+// The ambient-scan areas are mapped OpenStreetMap places (landfills, industrial
+// areas, bus terminals; /api/city-places). They are drawn as a soft ~1 km ring
+// rather than as a precise pin.
 const AREA_RADIUS_M = 800;
 
 function homeView(city: CityConfig) {
@@ -60,11 +60,28 @@ type Station = {
   lng: number;
   pm25: number | null;
   pm10: number | null;
+  no2: number | null;
+  so2: number | null;
+  co: number | null;
+  ozone: number | null;
+  nh3: number | null;
+  aqi: number | null;
+  dominantPollutant: string | null;
   lastUpdated: string | null;
   source: StationFeed;
   attribution: string | null;
   stale: boolean;
 };
+
+// Measured values listed in a station pop-up, in this order.
+const POPUP_POLLUTANTS: Array<{ key: "pm25" | "pm10" | "no2" | "so2" | "ozone" | "co"; label: string; unit: string }> = [
+  { key: "pm25", label: "PM2.5", unit: "µg/m³" },
+  { key: "pm10", label: "PM10", unit: "µg/m³" },
+  { key: "no2", label: "NO₂", unit: "µg/m³" },
+  { key: "so2", label: "SO₂", unit: "µg/m³" },
+  { key: "ozone", label: "O₃", unit: "µg/m³" },
+  { key: "co", label: "CO", unit: "mg/m³" },
+];
 
 type HotspotMapCanvasProps = {
   /** The map is built once per city; the parent remounts it (key) on a city change. */
@@ -125,11 +142,41 @@ export default function HotspotMapCanvas({
   const [ready, setReady] = useState(false);
   const [failed, setFailed] = useState(false);
   const [stations, setStations] = useState<Station[] | null>(null);
+  const [areas, setAreas] = useState<Array<{ label: string; lat: number; lng: number; osmId: string }>>([]);
   const [stationsError, setStationsError] = useState(false);
 
   useEffect(() => {
     onStatusChangeRef.current = onStatusChange;
   }, [onStatusChange]);
+
+  useEffect(() => {
+    if (!showContext) return;
+    let cancelled = false;
+    fetch(`/api/city-places?city=${city.id}`)
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data) => {
+        if (!cancelled && Array.isArray(data?.monitored)) setAreas(data.monitored);
+      })
+      .catch(() => {
+        /* no mapped places: the map just shows no area shortcuts */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [city.id, showContext]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!ready || !map) return;
+    (map.getSource("monitored-areas") as GeoJSONSource | undefined)?.setData({
+      type: "FeatureCollection",
+      features: areas.map((area) => ({
+        type: "Feature" as const,
+        properties: { label: area.label },
+        geometry: { type: "Polygon" as const, coordinates: [circlePolygon(area.lng, area.lat, AREA_RADIUS_M)] },
+      })),
+    });
+  }, [areas, ready]);
 
   useEffect(() => {
     if (!showContext) return;
@@ -240,11 +287,8 @@ export default function HotspotMapCanvas({
           type: "geojson",
           data: {
             type: "FeatureCollection",
-            features: city.monitoredAreas.map((area) => ({
-              type: "Feature" as const,
-              properties: { label: area.label },
-              geometry: { type: "Polygon" as const, coordinates: [circlePolygon(area.lng, area.lat, AREA_RADIUS_M)] },
-            })),
+            // Filled once /api/city-places answers (see the effect below).
+            features: [],
           },
         });
         map.addLayer(
@@ -441,16 +485,21 @@ export default function HotspotMapCanvas({
   useEffect(() => {
     const map = mapRef.current;
     if (!ready || !map || !stations) return;
+    const scale = AQI_SCALES[city.aqiScale];
     const markers: Marker[] = stations.map((station) => {
+      // The pin shows the station's AQI on the city's scale, never a bare concentration.
+      const reading = scale.fromStation(station);
       const element = document.createElement("button");
       element.type = "button";
       element.className = station.stale ? "map3d-station is-stale" : "map3d-station";
-      const color = !station.stale && station.pm25 != null ? getAQIInfo(station.pm25).color : "#9aa598";
-      element.style.setProperty("--station-color", color);
-      element.setAttribute("aria-label", station.name);
+      element.style.setProperty("--station-color", reading ? reading.info.color : "#9aa598");
+      element.setAttribute(
+        "aria-label",
+        reading ? `${station.name}: ${t(scale.labelKey)} ${reading.aqi}` : station.name,
+      );
       const head = document.createElement("span");
       head.className = "map3d-station-head";
-      head.textContent = station.pm25 != null ? String(Math.round(station.pm25)) : "–";
+      head.textContent = reading ? String(reading.aqi) : "–";
       const stem = document.createElement("span");
       stem.className = "map3d-station-stem";
       element.append(head, stem);
@@ -459,13 +508,23 @@ export default function HotspotMapCanvas({
         const updatedMs = parseSensorTimestamp(station.lastUpdated);
         const updated = updatedMs !== null ? formatCityTime(city, updatedMs) : station.lastUpdated;
         const source = `${station.attribution ?? t("map3d_station_source_unknown")} · ${station.source}`;
+        const measured = POPUP_POLLUTANTS.filter((item) => station[item.key] != null).map(
+          (item) => `${item.label} ${station[item.key]} ${item.unit}`,
+        );
         const lines = station.stale
           ? [t("map3d_station_stale").replace("{date}", updated ?? t("map3d_no_reading")), source]
           : [
-              `PM2.5 ${station.pm25 != null ? `${Math.round(station.pm25)} µg/m³` : t("map3d_no_reading")}`,
-              `PM10 ${station.pm10 != null ? `${Math.round(station.pm10)} µg/m³` : t("map3d_no_reading")}`,
+              reading
+                ? `${t(scale.labelKey)} ${reading.aqi} · ${t(reading.info.category)} · ${t("aqi_gauge_led_by").replace("{pollutant}", reading.dominant)}`
+                : t("map3d_no_reading"),
+              reading?.basis === "published"
+                ? t("aqi_gauge_basis_published")
+                : reading
+                  ? t("aqi_gauge_basis_computed").replace("{pollutants}", reading.pollutants.join(", "))
+                  : "",
+              measured.length ? measured.join(" · ") : t("map3d_no_reading"),
               `${source}${updated ? ` · ${updated}` : ""}`,
-            ];
+            ].filter(Boolean);
         pannedIdRef.current = null;
         popupRef.current
           ?.setOffset(48)
@@ -526,24 +585,24 @@ export default function HotspotMapCanvas({
               title={t("aqi_gauge_title_city").replace("{city}", city.name)}
               caption={
                 cityAqi
-                  ? t("aqi_gauge_city_caption").replace("{count}", String(cityAqi.stations))
+                  ? t("aqi_gauge_city_median").replace("{count}", String(cityAqi.stations))
                   : undefined
               }
               emptyText={stations || stationsError ? t("aqi_gauge_no_live") : t("drawer_loading")}
             />
           </div>
           <div className="map3d-legend">
-            <span><i className="map3d-key is-station" />{t("map3d_legend_ground_station")}</span>
+            <span><i className="map3d-key is-station" />{t("map3d_legend_station_aqi").replace("{scale}", t(AQI_SCALES[city.aqiScale].labelKey))}</span>
             <span><i className="map3d-key is-signal" />{t("map3d_legend_signal")}</span>
-            {city.monitoredAreas.length > 0 && (
+            {areas.length > 0 && (
               <span><i className="map3d-key is-area" />{t("map3d_legend_area")}</span>
             )}
             <small>{stationStatus}</small>
           </div>
           <div className="map3d-areas" role="group" aria-label={t("map3d_areas_label")}>
             <button type="button" onClick={showAllCity}>{t("map3d_all_city").replace("{city}", city.name)}</button>
-            {city.monitoredAreas.map((area) => (
-              <button key={area.label} type="button" onClick={() => flyToArea(area.lng, area.lat)}>
+            {areas.map((area) => (
+              <button key={area.osmId} type="button" onClick={() => flyToArea(area.lng, area.lat)} title={`OpenStreetMap ${area.osmId}`}>
                 {area.label}
               </button>
             ))}

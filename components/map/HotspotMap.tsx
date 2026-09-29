@@ -6,7 +6,7 @@ import { collection, limit, onSnapshot, orderBy, query } from "firebase/firestor
 import { formatStatus } from "@/components/command/commandData";
 import { isValidCell, latLngToCell } from "h3-js";
 import { H3_RESOLUTION } from "@/lib/geo";
-import { isInCity } from "@/lib/cities";
+import { formatCityTime, isInCity } from "@/lib/cities";
 import { useCity } from "@/lib/cityContext";
 import { db, isFirebaseConfigured } from "@/lib/firebase";
 import {
@@ -211,6 +211,13 @@ export default function HotspotMap({
     getServerCompactMapViewportSnapshot,
   );
   const [liveReports, setLiveReports] = useState<Incident[]>([]);
+  // Hotspots already promoted to incidents, including the ones the automatic
+  // station + satellite scan raised with no citizen photo.
+  const [openIncidents, setOpenIncidents] = useState<Incident[]>([]);
+  const [scanStatus, setScanStatus] = useState<{
+    cityId: string;
+    lastScan: { at: string; scanned: number; stations: number } | null;
+  } | null>(null);
   // "Live" is only claimed once Firestore has actually delivered a snapshot.
   const [feedState, setFeedState] = useState<"connecting" | "live" | "offline">(
     isFirebaseConfigured && db ? "connecting" : "offline",
@@ -249,17 +256,61 @@ export default function HotspotMap({
     );
   }, [isControlled]);
 
-  const cityReports = useMemo(
-    () => liveReports.filter((report) => isInCity(city, report.latitude, report.longitude)).slice(0, 20),
-    [city, liveReports],
+  useEffect(() => {
+    if (isControlled) return;
+    if (!isFirebaseConfigured || !db) return;
+    const incidentsQuery = query(collection(db, "incidents"), orderBy("updatedAt", "desc"), limit(100));
+    return onSnapshot(
+      incidentsQuery,
+      (snapshot) => {
+        setFeedState("live");
+        setOpenIncidents(
+          snapshot.docs
+            .map((incidentDoc) => reportToIncident(incidentDoc.id, incidentDoc.data() as FirestoreReport))
+            .filter((incident) => incident.status !== "resolved"),
+        );
+      },
+      () => setFeedState("offline"),
+    );
+  }, [isControlled]);
+
+  // When the automatic scan last checked this city, for the empty state.
+  useEffect(() => {
+    if (isControlled || !cityReady) return;
+    let cancelled = false;
+    fetch(`/api/scan-status?city=${city.id}`)
+      .then((response) => response.json().catch(() => null))
+      .then((data) => {
+        if (!cancelled) setScanStatus({ cityId: city.id, lastScan: data?.lastScan ?? null });
+      })
+      .catch(() => {
+        if (!cancelled) setScanStatus({ cityId: city.id, lastScan: null });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [city.id, cityReady, isControlled]);
+  const lastScan = scanStatus?.cityId === city.id ? scanStatus.lastScan : null;
+
+  const cityReports = useMemo(() => {
+    // A report already folded into an incident is shown through that incident.
+    const linked = new Set(openIncidents.flatMap((incident) => incident.linkedReportIds ?? []));
+    return liveReports
+      .filter((report) => !linked.has(report.id) && isInCity(city, report.latitude, report.longitude))
+      .slice(0, 20);
+  }, [city, liveReports, openIncidents]);
+
+  const cityIncidents = useMemo(
+    () => openIncidents.filter((incident) => isInCity(city, incident.latitude, incident.longitude)),
+    [city, openIncidents],
   );
 
   const incidents = useMemo(
     () => {
       if (controlledIncidents) return controlledIncidents;
-      return cityReports;
+      return [...cityIncidents, ...cityReports];
     },
-    [controlledIncidents, cityReports],
+    [controlledIncidents, cityIncidents, cityReports],
   );
 
   const clusters = useMemo(() => {
@@ -575,8 +626,14 @@ export default function HotspotMap({
                 <div className="vs-empty is-stacked map-feed-empty">
                   <CityIllustration />
                   <div>
-                    <strong>{t("map_feed_empty_title")}</strong>
-                    <p>{t("map_feed_empty_desc")}</p>
+                    <strong>{t("map_feed_none_title").replace("{city}", city.name)}</strong>
+                    <p>
+                      {lastScan
+                        ? t("map_feed_none_scan")
+                            .replace("{time}", formatCityTime(city, lastScan.at, { dateStyle: "medium", timeStyle: "short" }))
+                            .replace("{count}", String(lastScan.scanned))
+                        : t("map_feed_none_desc")}
+                    </p>
                   </div>
                 </div>
               ) : clusters.map((cluster) => {

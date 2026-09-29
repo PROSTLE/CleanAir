@@ -16,7 +16,6 @@
 import { CITY_BOUNDARIES, type Ring } from "@/lib/cityBoundaries";
 import { haversineKm } from "@/lib/geo";
 import type { HazardType } from "@/lib/types";
-import { MONITORED_CELLS } from "@/lib/mapConstants";
 
 /** Public station feeds, merged per city (see lib/stations.ts). */
 export type StationSource = "openaq" | "waqi" | "cpcb";
@@ -52,7 +51,6 @@ export interface CityConfig {
     /** Feeds to merge, in order of preference when two report the same monitor. */
     sources: StationSource[];
     network: string;
-    coverage: "dense" | "moderate" | "sparse";
   };
   /**
    * National 24-hour limits (µg/m³): a reading must exceed these to count as
@@ -69,8 +67,6 @@ export interface CityConfig {
   speechLanguage: string;
   /** Delhi has a measured diurnal PM2.5 profile; other cities forecast without one. */
   forecastProfile: "delhi" | "generic";
-  /** Known pollution-prone areas watched even without a station (Delhi only today). */
-  monitoredAreas: Array<{ label: string; lat: number; lng: number }>;
 }
 
 type CitySeed = Omit<CityConfig, "boundary" | "bounds">;
@@ -96,7 +92,7 @@ const SEEDS: CitySeed[] = [
     center: { lat: 28.6139, lng: 77.209 },
     zoom: 10,
     timeZone: "Asia/Kolkata",
-    stations: { sources: ALL_SOURCES, network: NETWORK, coverage: "dense" },
+    stations: { sources: ALL_SOURCES, network: NETWORK },
     standards: INDIA_NAAQS,
     fireRegion: { bounds: [73.8, 27.8, 78.2, 32.6], label: "Punjab, Haryana and Delhi NCR" },
     authorities: {
@@ -111,7 +107,6 @@ const SEEDS: CitySeed[] = [
     group: "india",
     aqiScale: "india",
     forecastProfile: "delhi",
-    monitoredAreas: MONITORED_CELLS,
   },
   {
     id: "mumbai",
@@ -122,7 +117,7 @@ const SEEDS: CitySeed[] = [
     center: { lat: 19.076, lng: 72.8777 },
     zoom: 10.3,
     timeZone: "Asia/Kolkata",
-    stations: { sources: ALL_SOURCES, network: NETWORK, coverage: "dense" },
+    stations: { sources: ALL_SOURCES, network: NETWORK },
     standards: INDIA_NAAQS,
     fireRegion: { bounds: [72.6, 18.7, 73.5, 19.8], label: "Mumbai Metropolitan Region" },
     authorities: {
@@ -137,7 +132,6 @@ const SEEDS: CitySeed[] = [
     group: "india",
     aqiScale: "india",
     forecastProfile: "generic",
-    monitoredAreas: [],
   },
   {
     id: "kolkata",
@@ -148,7 +142,7 @@ const SEEDS: CitySeed[] = [
     center: { lat: 22.5726, lng: 88.3639 },
     zoom: 11,
     timeZone: "Asia/Kolkata",
-    stations: { sources: ALL_SOURCES, network: NETWORK, coverage: "moderate" },
+    stations: { sources: ALL_SOURCES, network: NETWORK },
     standards: INDIA_NAAQS,
     fireRegion: { bounds: [87.8, 22.0, 88.9, 23.2], label: "Kolkata Metropolitan Area" },
     authorities: {
@@ -163,7 +157,6 @@ const SEEDS: CitySeed[] = [
     group: "india",
     aqiScale: "india",
     forecastProfile: "generic",
-    monitoredAreas: [],
   },
   {
     id: "chennai",
@@ -174,7 +167,7 @@ const SEEDS: CitySeed[] = [
     center: { lat: 13.0827, lng: 80.2707 },
     zoom: 10.6,
     timeZone: "Asia/Kolkata",
-    stations: { sources: ALL_SOURCES, network: NETWORK, coverage: "moderate" },
+    stations: { sources: ALL_SOURCES, network: NETWORK },
     standards: INDIA_NAAQS,
     fireRegion: { bounds: [79.8, 12.5, 80.5, 13.5], label: "Chennai Metropolitan Area" },
     authorities: {
@@ -189,7 +182,6 @@ const SEEDS: CitySeed[] = [
     group: "india",
     aqiScale: "india",
     forecastProfile: "generic",
-    monitoredAreas: [],
   },
   {
     id: "bengaluru",
@@ -200,7 +192,7 @@ const SEEDS: CitySeed[] = [
     center: { lat: 12.9716, lng: 77.5946 },
     zoom: 10.4,
     timeZone: "Asia/Kolkata",
-    stations: { sources: ALL_SOURCES, network: NETWORK, coverage: "moderate" },
+    stations: { sources: ALL_SOURCES, network: NETWORK },
     standards: INDIA_NAAQS,
     fireRegion: { bounds: [77.2, 12.6, 78.0, 13.4], label: "Bengaluru Urban and Rural districts" },
     authorities: {
@@ -215,7 +207,6 @@ const SEEDS: CitySeed[] = [
     group: "india",
     aqiScale: "india",
     forecastProfile: "generic",
-    monitoredAreas: [],
   },
   {
     id: "hyderabad",
@@ -226,7 +217,7 @@ const SEEDS: CitySeed[] = [
     center: { lat: 17.385, lng: 78.4867 },
     zoom: 10.4,
     timeZone: "Asia/Kolkata",
-    stations: { sources: ALL_SOURCES, network: NETWORK, coverage: "moderate" },
+    stations: { sources: ALL_SOURCES, network: NETWORK },
     standards: INDIA_NAAQS,
     fireRegion: { bounds: [78.0, 17.0, 79.0, 17.8], label: "Hyderabad, Rangareddy and Medchal districts" },
     authorities: {
@@ -241,7 +232,6 @@ const SEEDS: CitySeed[] = [
     group: "india",
     aqiScale: "india",
     forecastProfile: "generic",
-    monitoredAreas: [],
   },
   {
     id: "beijing",
@@ -252,7 +242,7 @@ const SEEDS: CitySeed[] = [
     center: { lat: 39.9042, lng: 116.4074 },
     zoom: 9.5,
     timeZone: "Asia/Shanghai",
-    stations: { sources: ["waqi"], network: "China national monitoring network via WAQI", coverage: "dense" },
+    stations: { sources: ["waqi"], network: "China national monitoring network via WAQI" },
     standards: { source: "China GB 3095-2012 Grade II (24 h)", pm25: 75, pm10: 150, no2: null, so2: null },
     fireRegion: { bounds: [114.0, 37.5, 119.5, 41.6], label: "Beijing, Tianjin and Hebei" },
     authorities: {
@@ -267,7 +257,6 @@ const SEEDS: CitySeed[] = [
     group: "brics",
     aqiScale: "us",
     forecastProfile: "generic",
-    monitoredAreas: [],
   },
   {
     id: "moscow",
@@ -278,7 +267,7 @@ const SEEDS: CitySeed[] = [
     center: { lat: 55.7558, lng: 37.6173 },
     zoom: 10,
     timeZone: "Europe/Moscow",
-    stations: { sources: ["waqi"], network: "Mosecomonitoring via WAQI", coverage: "dense" },
+    stations: { sources: ["waqi"], network: "Mosecomonitoring via WAQI" },
     standards: { source: "Russia SanPiN 1.2.3685-21 (24 h)", pm25: 35, pm10: 60, no2: null, so2: null },
     fireRegion: { bounds: [35.0, 54.3, 40.5, 57.0], label: "Moscow and neighbouring oblasts" },
     authorities: {
@@ -293,7 +282,6 @@ const SEEDS: CitySeed[] = [
     group: "brics",
     aqiScale: "us",
     forecastProfile: "generic",
-    monitoredAreas: [],
   },
   {
     id: "pretoria",
@@ -304,7 +292,7 @@ const SEEDS: CitySeed[] = [
     center: { lat: -25.7479, lng: 28.2293 },
     zoom: 10,
     timeZone: "Africa/Johannesburg",
-    stations: { sources: ["waqi"], network: "SAAQIS and local stations via WAQI", coverage: "moderate" },
+    stations: { sources: ["waqi"], network: "SAAQIS and local stations via WAQI" },
     standards: { source: "South Africa NAAQS (24 h)", pm25: 40, pm10: 75, no2: null, so2: null },
     fireRegion: { bounds: [26.5, -27.5, 30.5, -24.0], label: "Gauteng and the surrounding Highveld" },
     authorities: {
@@ -319,7 +307,6 @@ const SEEDS: CitySeed[] = [
     group: "brics",
     aqiScale: "us",
     forecastProfile: "generic",
-    monitoredAreas: [],
   },
   {
     id: "abu-dhabi",
@@ -330,7 +317,7 @@ const SEEDS: CitySeed[] = [
     center: { lat: 24.4539, lng: 54.3773 },
     zoom: 10.5,
     timeZone: "Asia/Dubai",
-    stations: { sources: ["waqi"], network: "Environment Agency Abu Dhabi stations via WAQI", coverage: "moderate" },
+    stations: { sources: ["waqi"], network: "Environment Agency Abu Dhabi stations via WAQI" },
     standards: { source: "UAE Cabinet Decree 12/2006; PM2.5 per EAQI 2023 (24 h)", pm25: 60, pm10: 150, no2: null, so2: null },
     fireRegion: { bounds: [52.5, 23.3, 56.0, 25.8], label: "Abu Dhabi and Dubai emirates" },
     authorities: {
@@ -345,7 +332,6 @@ const SEEDS: CitySeed[] = [
     group: "brics",
     aqiScale: "us",
     forecastProfile: "generic",
-    monitoredAreas: [],
   },
   {
     id: "jakarta",
@@ -356,7 +342,7 @@ const SEEDS: CitySeed[] = [
     center: { lat: -6.2088, lng: 106.8456 },
     zoom: 10.5,
     timeZone: "Asia/Jakarta",
-    stations: { sources: ["waqi"], network: "Jakarta stations and sensors via WAQI", coverage: "moderate" },
+    stations: { sources: ["waqi"], network: "Jakarta stations and sensors via WAQI" },
     standards: { source: "Indonesia PP 22/2021 (24 h)", pm25: 55, pm10: 75, no2: null, so2: null },
     fireRegion: { bounds: [105.5, -7.3, 108.0, -5.5], label: "Jakarta, Banten and West Java" },
     authorities: {
@@ -371,7 +357,6 @@ const SEEDS: CitySeed[] = [
     group: "brics",
     aqiScale: "us",
     forecastProfile: "generic",
-    monitoredAreas: [],
   },
   {
     id: "brasilia",
@@ -382,7 +367,7 @@ const SEEDS: CitySeed[] = [
     center: { lat: -15.7939, lng: -47.8828 },
     zoom: 10,
     timeZone: "America/Sao_Paulo",
-    stations: { sources: ["waqi"], network: "Distrito Federal sensors via WAQI", coverage: "sparse" },
+    stations: { sources: ["waqi"], network: "Distrito Federal sensors via WAQI" },
     standards: { source: "Brazil CONAMA 491/2018 PI-2 (24 h)", pm25: 50, pm10: 100, no2: null, so2: null },
     fireRegion: { bounds: [-50.0, -17.5, -45.5, -14.0], label: "Distrito Federal and the surrounding Cerrado" },
     authorities: {
@@ -397,7 +382,6 @@ const SEEDS: CitySeed[] = [
     group: "brics",
     aqiScale: "us",
     forecastProfile: "generic",
-    monitoredAreas: [],
   },
 ];
 

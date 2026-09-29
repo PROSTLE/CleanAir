@@ -198,12 +198,9 @@ export default function ZoneView({ cell }: { cell: string }) {
             {zone.station.status === "ok" && zone.station.data?.fresh && (
               <AqiGauge
                 scale={AQI_SCALES[findCity(zone.city.id)?.aqiScale ?? "india"]}
-                value={AQI_SCALES[findCity(zone.city.id)?.aqiScale ?? "india"].fromPm(
-                  zone.station.data.pm25,
-                  zone.station.data.pm10,
-                )}
+                value={AQI_SCALES[findCity(zone.city.id)?.aqiScale ?? "india"].fromStation(zone.station.data)}
                 title={t("aqi_gauge_title_area")}
-                caption={t("aqi_gauge_station_caption").replace("{station}", zone.station.data.stationName)}
+                caption={t("aqi_gauge_nearest").replace("{station}", zone.station.data.stationName)}
               />
             )}
             <ul className="svd-readings svd-zone-readings">

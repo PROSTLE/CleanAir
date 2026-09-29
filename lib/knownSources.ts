@@ -1,7 +1,5 @@
-// Recurring emission sources used for upwind attribution. Coordinates
-// are the approximate area centroids already used elsewhere in this repo
-// (lib/ambientScan.ts MONITORED_CELLS, lib/forecastEngine.ts cells); they are
-// good to ~1 km, which is the scale attribution works at.
+// Recurring emission sources used for upwind attribution. They are read from
+// OpenStreetMap for every city (lib/server/osmPlaces.ts); none are typed in.
 export type KnownSourceKind = "landfill" | "industrial_area" | "traffic_hub";
 
 export type KnownSource = {
@@ -10,26 +8,3 @@ export type KnownSource = {
   lat: number;
   lng: number;
 };
-
-const DELHI_SOURCES: KnownSource[] = [
-  { name: "Ghazipur Landfill", kind: "landfill", lat: 28.6264, lng: 77.3192 },
-  { name: "Bhalswa Landfill", kind: "landfill", lat: 28.7427, lng: 77.1636 },
-  { name: "Wazirpur Industrial Area", kind: "industrial_area", lat: 28.7041, lng: 77.1653 },
-  { name: "Mundka Industrial Area", kind: "industrial_area", lat: 28.6822, lng: 77.031 },
-  { name: "Okhla Industrial Area", kind: "industrial_area", lat: 28.5355, lng: 77.291 },
-  { name: "Naraina Industrial Area", kind: "industrial_area", lat: 28.6285, lng: 77.1409 },
-  { name: "Bawana Industrial Area", kind: "industrial_area", lat: 28.8039, lng: 77.0469 },
-  { name: "Anand Vihar ISBT", kind: "traffic_hub", lat: 28.6469, lng: 77.3152 },
-  { name: "ITO Crossing", kind: "traffic_hub", lat: 28.6292, lng: 77.241 },
-];
-
-// Only Delhi has a curated list so far. Other cities still get attribution
-// from live FIRMS fires and other open incidents; an empty list here means
-// "not curated yet", not "no sources".
-const KNOWN_SOURCES_BY_CITY: Record<string, KnownSource[]> = {
-  delhi: DELHI_SOURCES,
-};
-
-export function getKnownSources(cityId: string | null | undefined): KnownSource[] {
-  return (cityId && KNOWN_SOURCES_BY_CITY[cityId]) || [];
-}

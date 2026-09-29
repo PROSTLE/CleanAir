@@ -7,6 +7,7 @@ import { getSatelliteDataForPoint } from "@/lib/earthEngineSatellite";
 import { computeFusionConfidence, satelliteWeightToScore, sensorDeltaToScore } from "@/lib/fusionConfidence";
 import { getH3CellId, getSeverity } from "@/lib/geo";
 import { recordIncidentEvent } from "@/lib/server/incidentEvents";
+import { getMonitoredAreas } from "@/lib/server/osmPlaces";
 import {
   fetchCityStationReadings,
   getNearestStationReading,
@@ -536,9 +537,9 @@ async function getAmbientScanTargets(city: CityConfig): Promise<AmbientScanTarge
     }
   }
 
-  // Extra known pollution-prone zones: these only fill satellite-only gaps in
-  // places where there is no station cell.
-  for (const cell of city.monitoredAreas) {
+  // Mapped landfills, industrial areas and bus terminals (OpenStreetMap):
+  // these only fill satellite-only gaps in places where there is no station cell.
+  for (const cell of await getMonitoredAreas(city).catch(() => [])) {
     if (!isInCity(city, cell.lat, cell.lng)) continue;
     const h3CellId = getH3CellId({
       label: cell.label,
@@ -1029,6 +1030,19 @@ export async function scanCityAmbientHotspots(city: CityConfig): Promise<Ambient
 
     promoted.push({ cell: target.label, hazardType, tier, h3CellId });
   }
+
+  // Remembered so the public map can say when the city was last checked.
+  await adminDb
+    .collection("system")
+    .doc(`ambientScan-${city.id}`)
+    .set({
+      at: adminServerTimestamp(),
+      scanned: targets.length,
+      stations: targets.filter((target) => target.station).length,
+      promoted: promoted.length,
+      watching: watching.length,
+    })
+    .catch((error) => console.warn(`Could not record the ${city.name} scan`, error instanceof Error ? error.message : error));
 
   return { cityId: city.id, scanned: targets.length, promoted, watching };
 }

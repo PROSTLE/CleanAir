@@ -9,7 +9,6 @@ import CityIllustration from "@/components/shared/CityIllustration";
 import Icon, { type IconName } from "@/components/shared/Icon";
 import LiveIndicator, { type LiveState } from "@/components/shared/LiveIndicator";
 import {
-  DELHI_H3_CELLS,
   getAQIInfo,
   type ForecastCell,
   type ForecastResult,
@@ -140,17 +139,12 @@ export default function ForecastPage() {
   const [stationZones, setStationZones] = useState<StationZones | null>(null);
   const cells = useMemo(
     () =>
-      !cityReady
-        ? []
-        : city.id === "delhi"
-          ? DELHI_H3_CELLS
-          : stationZones?.cityId === city.id
-            ? stationZones.cells
-            : [],
+      // Every city's zones are its monitoring stations, read live.
+      !cityReady ? [] : stationZones?.cityId === city.id ? stationZones.cells : [],
     [city.id, cityReady, stationZones],
   );
-  const zonesError = city.id !== "delhi" && stationZones?.cityId === city.id ? stationZones.error : null;
-  const zonesLoading = city.id !== "delhi" && stationZones?.cityId !== city.id;
+  const zonesError = stationZones?.cityId === city.id ? stationZones.error : null;
+  const zonesLoading = stationZones?.cityId !== city.id;
   const [pickedCell, setSelectedCell] = useState<string | null>(null);
   // A pick from another city falls back to this city's first zone.
   const selectedCell = cells.find((cell) => cell.h3CellId === pickedCell)?.h3CellId ?? cells[0]?.h3CellId ?? null;
@@ -169,7 +163,7 @@ export default function ForecastPage() {
   const selected = cells.find((cell) => cell.h3CellId === selectedCell) ?? null;
 
   useEffect(() => {
-    if (!cityReady || city.id === "delhi") return;
+    if (!cityReady) return;
     let cancelled = false;
     fetch(`/api/stations?city=${city.id}`)
       .then(async (response) => {

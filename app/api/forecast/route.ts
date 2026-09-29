@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { DELHI_H3_CELLS } from "@/lib/forecastEngine";
 import { getForecastForCell } from "@/lib/server/forecastService";
 
 export const runtime = "nodejs";
@@ -9,7 +8,7 @@ export async function GET(request: Request) {
   if (!h3CellId) {
     return NextResponse.json(
       {
-        error: `Missing query parameter: h3CellId. Example: /api/forecast?h3CellId=${DELHI_H3_CELLS[0]?.h3CellId}`,
+        error: "Missing query parameter: h3CellId (an H3 resolution-8 cell inside a monitored city).",
       },
       { status: 400 },
     );

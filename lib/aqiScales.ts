@@ -1,19 +1,38 @@
 // The two AQI scales the gauge can show. Indian cities use India's National
-// AQI (lib/indiaAqi.ts); BRICS capitals use the US EPA AQI, the index their
-// WAQI stations publish. Both run 0–500 and are estimates from the latest PM
-// readings, not official 24-hour indices.
-import { AQI_SCALE as INDIA_BANDS, indiaAqiFromPm } from "@/lib/indiaAqi";
+// AQI (lib/indiaAqi.ts), computed from every pollutant a station reports.
+// BRICS capitals use the US EPA AQI: the station's own overall AQI as WAQI
+// publishes it (every pollutant it measures, ozone included), or, for a
+// station without one, an estimate from PM.
+import { AQI_SCALE as INDIA_BANDS, indiaAqiFromReadings, type PollutantReadings } from "@/lib/indiaAqi";
 import { concentrationToUsAqi, PM10_BREAKPOINTS, PM25_BREAKPOINTS } from "@/lib/usAqi";
 
 export type AqiBandInfo = { category: string; color: string; textColor: string };
-export type AqiReading = { aqi: number; dominant: "PM2.5" | "PM10"; info: AqiBandInfo };
+export type AqiReading = {
+  aqi: number;
+  /** Display name of the pollutant driving the index. */
+  dominant: string;
+  info: AqiBandInfo;
+  /** "published": the feed's own AQI; "computed": derived here from `pollutants`. */
+  basis: "published" | "computed";
+  /** Display names of the pollutants a computed AQI used. */
+  pollutants: string[];
+};
 export type AqiScaleId = "india" | "us";
+
+/** The station fields an AQI can be built from. */
+export type AqiInput = PollutantReadings & {
+  aqi?: number | null;
+  dominantPollutant?: string | null;
+  stale?: boolean;
+};
 
 export type AqiScale = {
   id: AqiScaleId;
   /** Translation key for the scale's name. */
   labelKey: string;
   bands: ReadonlyArray<{ from: number; to: number; info: AqiBandInfo }>;
+  fromStation: (station: AqiInput) => AqiReading | null;
+  /** PM-only estimate, kept for callers that only have PM. */
   fromPm: (pm25: number | null | undefined, pm10: number | null | undefined) => AqiReading | null;
 };
 
@@ -27,8 +46,18 @@ const US_BANDS: ReadonlyArray<{ from: number; to: number; info: AqiBandInfo }> =
   { from: 300, to: 500, info: { category: "aqi_us_hazardous", color: "#7a1a2e", textColor: "#6a1526" } },
 ];
 
-function usBand(aqi: number): AqiBandInfo {
-  return (US_BANDS.find((band) => aqi <= band.to) ?? US_BANDS[US_BANDS.length - 1]).info;
+// WAQI's pollutant codes → display names.
+const FEED_POLLUTANT_LABELS: Record<string, string> = {
+  pm25: "PM2.5",
+  pm10: "PM10",
+  o3: "O₃",
+  no2: "NO₂",
+  so2: "SO₂",
+  co: "CO",
+};
+
+function bandFor(bands: AqiScale["bands"], aqi: number): AqiBandInfo {
+  return (bands.find((band) => aqi <= band.to) ?? bands[bands.length - 1]).info;
 }
 
 function usAqiFromPm(pm25: number | null | undefined, pm10: number | null | undefined): AqiReading | null {
@@ -37,25 +66,59 @@ function usAqiFromPm(pm25: number | null | undefined, pm10: number | null | unde
   if (fromPm25 === null && fromPm10 === null) return null;
   const dominant = fromPm10 !== null && (fromPm25 === null || fromPm10 > fromPm25) ? "PM10" : "PM2.5";
   const aqi = Math.max(fromPm25 ?? 0, fromPm10 ?? 0);
-  return { aqi, dominant, info: usBand(aqi) };
+  const pollutants = [fromPm25 !== null && "PM2.5", fromPm10 !== null && "PM10"].filter((value): value is string => !!value);
+  return { aqi, dominant, info: bandFor(US_BANDS, aqi), basis: "computed", pollutants };
+}
+
+function usAqiFromStation(station: AqiInput): AqiReading | null {
+  if (station.stale) return null;
+  if (typeof station.aqi === "number" && Number.isFinite(station.aqi) && station.aqi >= 0) {
+    const aqi = Math.round(station.aqi);
+    const code = station.dominantPollutant?.toLowerCase() ?? "";
+    return {
+      aqi,
+      dominant: FEED_POLLUTANT_LABELS[code] ?? (code.toUpperCase() || "—"),
+      info: bandFor(US_BANDS, aqi),
+      basis: "published",
+      pollutants: [],
+    };
+  }
+  return usAqiFromPm(station.pm25, station.pm10);
+}
+
+function indiaFromStation(station: AqiInput): AqiReading | null {
+  if (station.stale) return null;
+  const reading = indiaAqiFromReadings(station);
+  return reading && { ...reading, basis: "computed" };
 }
 
 export const AQI_SCALES: Record<AqiScaleId, AqiScale> = {
-  india: { id: "india", labelKey: "aqi_gauge_scale_label", bands: INDIA_BANDS, fromPm: indiaAqiFromPm },
-  us: { id: "us", labelKey: "aqi_gauge_scale_label_us", bands: US_BANDS, fromPm: usAqiFromPm },
+  india: {
+    id: "india",
+    labelKey: "aqi_gauge_scale_label",
+    bands: INDIA_BANDS,
+    fromStation: indiaFromStation,
+    fromPm: (pm25, pm10) => indiaFromStation({ pm25, pm10 }),
+  },
+  us: {
+    id: "us",
+    labelKey: "aqi_gauge_scale_label_us",
+    bands: US_BANDS,
+    fromStation: usAqiFromStation,
+    fromPm: usAqiFromPm,
+  },
 };
 
 /**
- * City-wide AQI as the median of its live stations' estimates: one very
- * polluted street shouldn't read as the whole city, nor one clean park.
+ * City-wide AQI as the median of its live stations' AQI: one very polluted
+ * street shouldn't read as the whole city, nor one clean park.
  */
 export function medianStationAqi(
-  stations: ReadonlyArray<{ pm25: number | null; pm10: number | null; stale?: boolean }>,
+  stations: ReadonlyArray<AqiInput>,
   scale: AqiScale = AQI_SCALES.india,
 ): { aqi: AqiReading; stations: number } | null {
   const values = stations
-    .filter((station) => !station.stale)
-    .map((station) => scale.fromPm(station.pm25, station.pm10))
+    .map((station) => scale.fromStation(station))
     .filter((value): value is AqiReading => value !== null)
     .sort((a, b) => a.aqi - b.aqi);
   if (values.length === 0) return null;
@@ -63,7 +126,10 @@ export function medianStationAqi(
   const aqi =
     values.length % 2 === 1 ? values[middle].aqi : Math.round((values[middle - 1].aqi + values[middle].aqi) / 2);
   // The dominant pollutant is the one most stations are led by.
-  const pm10Led = values.filter((value) => value.dominant === "PM10").length;
-  const info = scale.bands.find((entry) => aqi <= entry.to)?.info ?? scale.bands[scale.bands.length - 1].info;
-  return { aqi: { aqi, dominant: pm10Led > values.length / 2 ? "PM10" : "PM2.5", info }, stations: values.length };
+  const counts = new Map<string, number>();
+  for (const value of values) counts.set(value.dominant, (counts.get(value.dominant) ?? 0) + 1);
+  const dominant = [...counts.entries()].sort((a, b) => b[1] - a[1])[0][0];
+  const basis = values.every((value) => value.basis === "published") ? "published" : "computed";
+  const pollutants = [...new Set(values.flatMap((value) => value.pollutants))];
+  return { aqi: { aqi, dominant, info: bandFor(scale.bands, aqi), basis, pollutants }, stations: values.length };
 }

@@ -4,7 +4,6 @@ import { cellToLatLng, isValidCell } from "h3-js";
 import { getCity, resolveCityForPoint } from "@/lib/cities";
 import {
   backtestHeuristic,
-  DELHI_H3_CELLS,
   forecastPM25,
   type BacktestResult,
   type ForecastResult,
@@ -47,16 +46,10 @@ export type ForecastServiceResult =
   | { ok: false; status: number; error: string; h3CellId: string };
 
 export function resolveForecastCell(h3CellId: string) {
-  const known = DELHI_H3_CELLS.find((cell) => cell.h3CellId === h3CellId);
-  const [centerLat, centerLng] = cellToLatLng(h3CellId);
-  const city = resolveCityForPoint(known?.lat ?? centerLat, known?.lng ?? centerLng) ?? getCity("delhi");
-  return {
-    city,
-    label: known?.label ?? `Cell ${h3CellId}`,
-    bigQueryLabel: known?.bigQueryLabel ?? known?.label ?? `Cell ${h3CellId}`,
-    lat: known?.lat ?? centerLat,
-    lng: known?.lng ?? centerLng,
-  };
+  const [lat, lng] = cellToLatLng(h3CellId);
+  const city = resolveCityForPoint(lat, lng) ?? getCity("delhi");
+  const label = `Cell ${h3CellId}`;
+  return { city, label, bigQueryLabel: label, lat, lng };
 }
 
 function ageHours(history: SensorReading[]) {

@@ -5,9 +5,8 @@ import { cityTimeZoneLabel, getCity, isInCity, type CityConfig } from "@/lib/cit
 import { getFiresNear, getRegionalFireHotspots } from "@/lib/earthEngineSatellite";
 import { adminDb } from "@/lib/firebaseAdmin";
 import { resolveIncidentHazardType } from "@/lib/firestoreReports";
-import { DELHI_H3_CELLS } from "@/lib/forecastEngine";
 import { getH3CellId, toCoordinate } from "@/lib/geo";
-import { getKnownSources } from "@/lib/knownSources";
+import { getKnownSources } from "@/lib/server/osmPlaces";
 import { getWindData } from "@/lib/weather";
 import { getForecastForCell } from "@/lib/server/forecastService";
 import { fetchCityStationReadings, fetchNearbyStations } from "@/lib/stations";
@@ -32,12 +31,7 @@ Rules:
 - You cannot dispatch or resolve incidents yourself; tell the operator which to action in the dashboard.`;
 }
 
-function forecastZones(city: CityConfig) {
-  return city.id === "delhi" ? DELHI_H3_CELLS.map((cell) => cell.label) : null;
-}
-
 function declarations(city: CityConfig): GeminiFunctionDeclaration[] {
-  const zones = forecastZones(city);
   return [
     {
       name: "list_active_incidents",
@@ -66,12 +60,10 @@ function declarations(city: CityConfig): GeminiFunctionDeclaration[] {
     },
     {
       name: "get_zone_forecast",
-      description: zones
-        ? `24-hour PM2.5 forecast for a monitored ${city.name} zone. Zones: ${zones.join(", ")}.`
-        : `24-hour PM2.5 forecast for a ${city.name} monitoring station. Zone = the station name (see get_station_readings).`,
+      description: `24-hour PM2.5 forecast for a ${city.name} monitoring station. Zone = the station name (see get_station_readings).`,
       parameters: {
         type: "object",
-        properties: { zone: { type: "string", description: zones ? "Zone name from the list." : "Station name." } },
+        properties: { zone: { type: "string", description: "Station name." } },
         required: ["zone"],
       },
     },
@@ -188,15 +180,10 @@ function handlers(city: CityConfig): Record<string, ToolHandler> {
     async get_zone_forecast(args) {
       const zone = String(args.zone ?? "").toLowerCase();
       const matches = (label: string) => label.toLowerCase().includes(zone) || zone.includes(label.toLowerCase());
-      let target: { label: string; h3CellId: string } | undefined;
-      if (city.id === "delhi") {
-        target = DELHI_H3_CELLS.find((candidate) => matches(candidate.label));
-        if (!target) throw new Error(`Unknown zone. Choose one of: ${DELHI_H3_CELLS.map((c) => c.label).join(", ")}.`);
-      } else {
-        const station = (await fetchCityStationReadings(city)).find((candidate) => matches(candidate.stationName));
-        if (!station) throw new Error(`No ${city.name} station matches "${args.zone}".`);
-        target = { label: station.stationName, h3CellId: getH3CellId({ lat: station.lat, lng: station.lng }) };
-      }
+      // Forecast zones are the city's live stations, as on the forecast page.
+      const station = (await fetchCityStationReadings(city)).find((candidate) => matches(candidate.stationName));
+      if (!station) throw new Error(`No ${city.name} station matches "${args.zone}".`);
+      const target = { label: station.stationName, h3CellId: getH3CellId({ lat: station.lat, lng: station.lng }) };
       const result = await getForecastForCell(target.h3CellId);
       if (!result.ok) throw new Error(result.error);
       return {
@@ -257,15 +244,16 @@ function handlers(city: CityConfig): Record<string, ToolHandler> {
     async get_upwind_sources(args) {
       const lat = num(args.lat, "lat");
       const lng = num(args.lng, "lng");
-      const [wind, regional] = await Promise.all([
+      const [wind, regional, knownSources] = await Promise.all([
         getWindData(lat, lng),
         getRegionalFireHotspots(city.id).catch(() => null),
+        getKnownSources(city),
       ]);
       return rankUpwindSources({
         lat,
         lng,
         wind: wind ? { fromDeg: wind.windDegrees, speedMs: wind.windSpeedMs } : null,
-        candidates: getKnownSources(city.id),
+        candidates: knownSources,
         fires: regional && !regional.error ? regional.fires : [],
       });
     },

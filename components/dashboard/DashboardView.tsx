@@ -19,7 +19,7 @@ import {
 } from "@/lib/firestoreReports";
 import { cityTimeZoneLabel, formatCityTime, isInCity, type CityConfig } from "@/lib/cities";
 import { useCity } from "@/lib/cityContext";
-import { AQI_SCALES, medianStationAqi } from "@/lib/aqiScales";
+import { AQI_SCALES, medianStationAqi, type AqiInput } from "@/lib/aqiScales";
 import { parseSensorTimestamp, priorityRank, TIER_LABELS } from "@/lib/supportEvidence";
 import { formatStatus, getIncidentAge } from "@/components/command/commandData";
 import type { HazardType, Incident, Severity } from "@/lib/types";
@@ -155,7 +155,7 @@ export default function DashboardView() {
   // City-wide AQI for the header gauge, from the same stations the map shows.
   const [cityStations, setCityStations] = useState<{
     cityId: string;
-    stations: Array<{ pm25: number | null; pm10: number | null; stale?: boolean }>;
+    stations: AqiInput[];
   } | null>(null);
   useEffect(() => {
     if (!cityReady) return;
@@ -393,7 +393,7 @@ export default function DashboardView() {
             scale={aqiScale}
             value={cityAqi?.aqi ?? null}
             title={t("aqi_gauge_title_city").replace("{city}", city.name)}
-            caption={cityAqi ? t("aqi_gauge_city_caption").replace("{count}", String(cityAqi.stations)) : undefined}
+            caption={cityAqi ? t("aqi_gauge_city_median").replace("{count}", String(cityAqi.stations)) : undefined}
             emptyText={cityStations?.cityId === city.id ? t("aqi_gauge_no_live") : t("drawer_loading")}
           />
         </div>

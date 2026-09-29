@@ -2,7 +2,7 @@ import "server-only";
 
 import { latLngToCell } from "h3-js";
 import { CITIES, type CityConfig } from "@/lib/cities";
-import { DELHI_H3_CELLS, type SensorReading } from "@/lib/forecastEngine";
+import type { SensorReading } from "@/lib/forecastEngine";
 import { H3_RESOLUTION } from "@/lib/geo";
 import {
   ensureGoogleHistoryTable,
@@ -86,9 +86,6 @@ export function getModelledHistory(point: Point): Promise<SensorReading[]> {
 
 /** The zones the forecast page offers for a city (same rules as app/forecast/page.tsx). */
 async function forecastZones(city: CityConfig): Promise<Point[]> {
-  if (city.id === "delhi") {
-    return DELHI_H3_CELLS.map((cell) => ({ h3CellId: cell.h3CellId, label: cell.label, lat: cell.lat, lng: cell.lng }));
-  }
   const stations = await fetchCityStationDirectory(city);
   return [...stations]
     .sort((a, b) => Number(a.stale) - Number(b.stale))

@@ -39,6 +39,8 @@ service cloud.firestore {
     match /cellStats/{cell} { allow read, write: if false; }
     match /zoneBriefs/{briefId} { allow read, write: if false; }
     match /reportTokens/{reportId} { allow read, write: if false; }
+    // OpenStreetMap places per city, served through /api/city-places only.
+    match /osmPlaces/{cityId} { allow read, write: if false; }
 
     match /{document=**} {
       allow read, write: if false;

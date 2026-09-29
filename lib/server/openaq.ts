@@ -98,6 +98,8 @@ function baseStation(location: OpenAqLocation): StationReading {
     nh3: null,
     ozone: null,
     lastUpdated: location.datetimeLast?.utc ?? null,
+    aqi: null,
+    dominantPollutant: null,
     source: "OpenAQ",
     attribution: attributionOf(location),
     stale: !isRecent(lastSeenMs(location)),

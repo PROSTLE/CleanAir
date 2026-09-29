@@ -29,6 +29,13 @@ export type ZoneStation = {
   pm25: number | null;
   pm10: number | null;
   no2: number | null;
+  so2: number | null;
+  co: number | null;
+  ozone: number | null;
+  nh3: number | null;
+  /** The feed's own overall AQI (WAQI), when it publishes one. */
+  aqi: number | null;
+  dominantPollutant: string | null;
   lastUpdated: string | null;
   fresh: boolean;
   source: StationFeed;
@@ -113,6 +120,12 @@ export async function getZoneSummary(cell: ZoneCell): Promise<ZoneSummary> {
         pm25: reading.pm25,
         pm10: reading.pm10,
         no2: reading.no2,
+        so2: reading.so2,
+        co: reading.co,
+        ozone: reading.ozone,
+        nh3: reading.nh3,
+        aqi: reading.aqi,
+        dominantPollutant: reading.dominantPollutant,
         lastUpdated: reading.lastUpdated,
         fresh: isSensorReadingFresh(reading.lastUpdated),
         source: reading.source,

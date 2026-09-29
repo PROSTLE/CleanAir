@@ -1,12 +1,10 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
-import { cellToLatLng, isValidCell } from "h3-js";
 import { rankUpwindSources } from "@/lib/attribution";
 import { parseExif } from "@/lib/exif";
 import {
   backtestHeuristic,
-  DELHI_H3_CELLS,
   forecastPM25,
   getIstHour,
   getLocalHour,
@@ -24,7 +22,8 @@ import {
 } from "@/lib/supportEvidence";
 import { PM10_BREAKPOINTS, PM25_BREAKPOINTS, usAqiToConcentration } from "@/lib/usAqi";
 import { AQI_SCALES, medianStationAqi } from "@/lib/aqiScales";
-import { indiaAqiFromPm } from "@/lib/indiaAqi";
+import { indiaAqiFromPm, indiaAqiFromReadings } from "@/lib/indiaAqi";
+import { selectPlaces } from "@/lib/osmPlacesParse";
 import { concentrationToUsAqi } from "@/lib/usAqi";
 import { applyLatest, openAqPollutant } from "@/lib/openaqParse";
 import { mergeStationFeeds } from "@/lib/stationMerge";
@@ -216,17 +215,6 @@ describe("forecast engine", () => {
     assert.equal(getLocalHour(instant, "Asia/Kolkata"), 5);
   });
 
-  it("uses real Delhi H3 cells", () => {
-    const ids = DELHI_H3_CELLS.map((cell) => cell.h3CellId);
-    assert.equal(new Set(ids).size, ids.length);
-    for (const cell of DELHI_H3_CELLS) {
-      assert.ok(isValidCell(cell.h3CellId), cell.h3CellId);
-      assert.ok(isInOperationalRegion(cell.lat, cell.lng), `${cell.label} should be inside Delhi NCT`);
-      const [lat, lng] = cellToLatLng(cell.h3CellId);
-      assert.ok(haversineKm(lat, lng, cell.lat, cell.lng) < 1, `${cell.label} hexagon should contain its zone`);
-    }
-  });
-
   it("refuses to forecast without data", () => {
     assert.throws(() => forecastPM25([]));
   });
@@ -356,6 +344,24 @@ describe("India National AQI", () => {
     assert.equal(medianStationAqi([{ pm25: 12, pm10: null }], AQI_SCALES.us)?.aqi.info.category, "aqi_us_good");
   });
 
+  it("uses a station's published AQI (ozone included) over a PM-only estimate", () => {
+    // Beijing at 02:00 on 30 Sep 2026: PM2.5 ~1.2 µg/m³, but WAQI's overall AQI is 21, led by ozone.
+    const beijing = AQI_SCALES.us.fromStation({ aqi: 21, dominantPollutant: "o3", pm25: 1.2, pm10: 6 });
+    assert.equal(beijing?.aqi, 21);
+    assert.equal(beijing?.dominant, "O₃");
+    assert.equal(beijing?.basis, "published");
+    assert.equal(AQI_SCALES.us.fromStation({ aqi: 21, stale: true }), null);
+    assert.equal(AQI_SCALES.us.fromStation({ pm25: 12 })?.basis, "computed");
+  });
+
+  it("counts gases in India's AQI when a station measures them", () => {
+    const reading = indiaAqiFromReadings({ pm25: 20, no2: 200 });
+    assert.equal(reading?.aqi, 220);
+    assert.equal(reading?.dominant, "NO₂");
+    assert.deepEqual(reading?.pollutants, ["PM2.5", "NO₂"]);
+    assert.equal(indiaAqiFromReadings({ co: 1.5 })?.aqi, 75);
+  });
+
   it("uses the median of live stations and ignores stale ones", () => {
     const city = medianStationAqi([
       { pm25: 30, pm10: null },
@@ -389,7 +395,8 @@ describe("OpenAQ parsing", () => {
     };
     const base = () => ({
       stationName: "Test", lat: 19, lng: 72.9, distanceKm: 0, pm25: null, pm10: null, no2: null, so2: null,
-      co: null, nh3: null, ozone: null, lastUpdated: null, source: "OpenAQ" as const, attribution: null, stale: true,
+      co: null, nh3: null, ozone: null, lastUpdated: null, aqi: null, dominantPollutant: null,
+      source: "OpenAQ" as const, attribution: null, stale: true,
     });
     const live = applyLatest(base(), location, [
       { sensorsId: 10, value: 42.44, datetime: { utc: "2026-09-29T11:00:00Z" } },
@@ -408,7 +415,7 @@ describe("OpenAQ parsing", () => {
 describe("station feed merge", () => {
   const station = (source: "OpenAQ" | "WAQI" | "CPCB", lastUpdated: string, stale = false, lng = 72.9) => ({
     stationName: source, lat: 19, lng, distanceKm: 0, pm25: stale ? 99 : 40, pm10: null, no2: null, so2: null,
-    co: null, nh3: null, ozone: null, lastUpdated, source, attribution: null, stale,
+    co: null, nh3: null, ozone: null, lastUpdated, aqi: null, dominantPollutant: null, source, attribution: null, stale,
   });
 
   it("keeps one copy of a monitor two feeds relay, preferring live then newer", () => {
@@ -443,5 +450,32 @@ describe("station feed merge", () => {
     const merged = mergeStationFeeds([[station("OpenAQ", "2026-06-23T10:00:00Z", true), station("OpenAQ", "2026-09-29T10:00:00Z", false, 73.0)]]);
     assert.equal(merged.length, 2);
     assert.equal(merged[0].pm25, null);
+  });
+});
+
+describe("OpenStreetMap places", () => {
+  const delhi = CITIES.find((city) => city.id === "delhi")!;
+  const box = (lat: number, lng: number, size = 0.004) => ({ minlat: lat - size, minlon: lng - size, maxlat: lat + size, maxlon: lng + size });
+
+  it("keeps mapped places inside the city, ranked by area, and drops the rest", () => {
+    const places = selectPlaces(delhi, [
+      { type: "way", id: 1, tags: { landuse: "landfill", name: "Ghazipur Landfill" }, bounds: box(28.624, 77.327) },
+      { type: "way", id: 2, tags: { landuse: "industrial", name: "Okhla Phase - I" }, bounds: box(28.53, 77.28, 0.01) },
+      { type: "way", id: 3, tags: { landuse: "industrial", name: "Small Estate" }, bounds: box(28.70, 77.16, 0.002) },
+      // Gurugram, Haryana: outside Delhi NCT.
+      { type: "way", id: 4, tags: { landuse: "industrial", name: "Udyog Vihar" }, bounds: box(28.50, 77.08) },
+      { type: "node", id: 5, tags: { amenity: "bus_station", name: "Kashmere Gate ISBT" }, lat: 28.668, lon: 77.228 },
+      // Unnamed industrial land is skipped; an unnamed landfill is kept and labelled as such.
+      { type: "way", id: 6, tags: { landuse: "industrial" }, bounds: box(28.6, 77.2) },
+      { type: "way", id: 7, tags: { landuse: "landfill" }, bounds: box(28.742, 77.163) },
+      // The same estate mapped twice: only the larger copy is kept.
+      { type: "way", id: 8, tags: { landuse: "industrial", name: "Okhla Phase - I" }, bounds: box(28.531, 77.281, 0.001) },
+    ]);
+    assert.deepEqual(
+      places.map((place) => place.name),
+      ["Ghazipur Landfill", "Landfill (unnamed on OSM)", "Okhla Phase - I", "Small Estate", "Kashmere Gate ISBT"],
+    );
+    assert.equal(places[0].osmId, "way/1");
+    assert.equal(places.find((place) => place.name === "Kashmere Gate ISBT")?.kind, "traffic_hub");
   });
 });

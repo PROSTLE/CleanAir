@@ -33,6 +33,8 @@ type FeedResponse = {
   status?: string;
   data?:
     | {
+        aqi?: number | string;
+        dominentpol?: string;
         attributions?: Array<{ name?: string }>;
         city?: { name?: string; geo?: [number, number] };
         iaqi?: Record<string, { v?: number }>;
@@ -94,6 +96,9 @@ async function fetchStation(uid: number, fallbackName: string): Promise<StationR
     nh3: null,
     ozone: null,
     lastUpdated: data.time?.iso ?? null,
+    // WAQI's own overall AQI (US EPA, all pollutants it measures), kept as published.
+    aqi: !stale && Number.isFinite(Number(data.aqi)) ? Number(data.aqi) : null,
+    dominantPollutant: !stale ? (data.dominentpol?.trim() || null) : null,
     source: "WAQI",
     attribution: agency ?? null,
     stale,

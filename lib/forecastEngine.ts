@@ -11,7 +11,6 @@
  *   5. 24-hour hourly forecast array with confidence degradation
  */
 
-import { latLngToCell } from "h3-js";
 
 // Delhi is UTC+5:30 with no DST. The diurnal profile below is in Delhi local
 // time, so hour-of-day must be computed in IST explicitly — Date#getHours()
@@ -394,31 +393,6 @@ export function getAQIInfo(pm25: number): AQIInfo {
     };
   }
 }
-
-// ─── Forecast cells ─────────────────────────────────────────────────────────
-// H3 IDs are derived from each cell's coordinates at the app-wide resolution
-// (8, same as reportSubmissions.ts and ml/data-prep.py). The IDs used to be
-// hardcoded strings that decoded to hexagons in New York (one wasn't a valid
-// cell at all), so the BigQuery h3CellId match could never hit.
-// `bigQueryLabel` is the CPCB station whose history backs the forecast; it is
-// shown in the UI so a zone isn't presented as having its own monitor.
-const FORECAST_H3_RESOLUTION = 8;
-
-const FORECAST_CELL_SEEDS: Array<Omit<ForecastCell, "h3CellId">> = [
-  { labelKey: "cell_anand_vihar", label: "Anand Vihar", bigQueryLabel: "Anand Vihar, Delhi - DPCC", lat: 28.6469, lng: 77.3152 },
-  { labelKey: "cell_ito_crossing", label: "ITO Crossing", bigQueryLabel: "ITO, Delhi - CPCB", lat: 28.6292, lng: 77.2410 },
-  { labelKey: "cell_ghazipur_landfill", label: "Ghazipur Landfill", bigQueryLabel: "Patparganj, Delhi - DPCC", lat: 28.6264, lng: 77.3192 },
-  { labelKey: "cell_bawana_industrial", label: "Bawana Industrial", bigQueryLabel: "Bawana, Delhi - DPCC", lat: 28.8039, lng: 77.0469 },
-  { labelKey: "cell_dwarka_sector_21", label: "Dwarka Sector 21", bigQueryLabel: "NSIT Dwarka, Delhi - CPCB", lat: 28.5859, lng: 77.0718 },
-  { labelKey: "cell_bhalswa_landfill", label: "Bhalswa Landfill", bigQueryLabel: "Jahangirpuri, Delhi - DPCC", lat: 28.7427, lng: 77.1636 },
-  { labelKey: "cell_connaught_place", label: "Connaught Place", bigQueryLabel: "Mandir Marg, Delhi - DPCC", lat: 28.6315, lng: 77.2167 },
-  { labelKey: "cell_rohini_sector_8", label: "Rohini Sector 8", bigQueryLabel: "Rohini, Delhi - DPCC", lat: 28.7495, lng: 77.1100 },
-];
-
-export const DELHI_H3_CELLS: ForecastCell[] = FORECAST_CELL_SEEDS.map((cell) => ({
-  ...cell,
-  h3CellId: latLngToCell(cell.lat, cell.lng, FORECAST_H3_RESOLUTION),
-}));
 
 // ─── Backtest ─────────────────────────────────────────────────────────────────
 

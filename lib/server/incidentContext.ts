@@ -6,7 +6,7 @@ import { getRegionalFireHotspots, getFiresNear, type NearbyFireSummary } from "@
 import { adminDb, adminServerTimestamp } from "@/lib/firebaseAdmin";
 import { toCoordinate } from "@/lib/geo";
 import { resolveCityForPoint } from "@/lib/cities";
-import { getKnownSources } from "@/lib/knownSources";
+import { getKnownSources } from "@/lib/server/osmPlaces";
 import { getWindData, type WindData } from "@/lib/weather";
 import { getCurrentAirQuality, isAirQualityConfigured, type AirQualitySnapshot } from "@/lib/server/googleAirQuality";
 import { HttpError } from "@/lib/server/http";
@@ -95,7 +95,7 @@ async function getActiveIncidentCandidates(excludeId: string): Promise<Attributi
 export async function buildIncidentContext(target: Target): Promise<IncidentContext> {
   const { lat, lng } = target;
   const city = resolveCityForPoint(lat, lng);
-  const [windPiece, firesPiece, regional, incidentCandidates, sitesPiece, aqPiece] = await Promise.all([
+  const [windPiece, firesPiece, regional, incidentCandidates, sitesPiece, aqPiece, knownSources] = await Promise.all([
     piece(true, "", async () => {
       const wind = await getWindData(lat, lng);
       if (!wind) throw new Error("Open-Meteo returned no wind data.");
@@ -110,6 +110,7 @@ export async function buildIncidentContext(target: Target): Promise<IncidentCont
     getActiveIncidentCandidates(target.id).catch(() => [] as AttributionCandidate[]),
     piece(isPlacesConfigured(), "GOOGLE_PLACES_API_KEY is not set.", () => findSensitiveSites(lat, lng, 1000)),
     piece(isAirQualityConfigured(), "GOOGLE_AIR_QUALITY_API_KEY is not set.", () => getCurrentAirQuality(lat, lng)),
+    getKnownSources(city),
   ]);
 
   const attribution: Piece<AttributionResult> = {
@@ -121,7 +122,7 @@ export async function buildIncidentContext(target: Target): Promise<IncidentCont
         windPiece.status === "ok"
           ? { fromDeg: windPiece.data.windDegrees, speedMs: windPiece.data.windSpeedMs }
           : null,
-      candidates: [...getKnownSources(city?.id), ...incidentCandidates],
+      candidates: [...knownSources, ...incidentCandidates],
       fires: regional && !regional.error ? regional.fires : [],
     }),
   };
@@ -150,16 +151,17 @@ export async function getAndStoreIncidentContext(target: Target) {
  */
 export async function buildAttributionForPoint(lat: number, lng: number, excludeId = "") {
   const city = resolveCityForPoint(lat, lng);
-  const [wind, regional, incidentCandidates] = await Promise.all([
+  const [wind, regional, incidentCandidates, knownSources] = await Promise.all([
     getWindData(lat, lng).catch(() => null),
     city ? getRegionalFireHotspots(city.id).catch(() => null) : Promise.resolve(null),
     getActiveIncidentCandidates(excludeId).catch(() => [] as AttributionCandidate[]),
+    getKnownSources(city),
   ]);
   return rankUpwindSources({
     lat,
     lng,
     wind: wind ? { fromDeg: wind.windDegrees, speedMs: wind.windSpeedMs } : null,
-    candidates: [...getKnownSources(city?.id), ...incidentCandidates],
+    candidates: [...knownSources, ...incidentCandidates],
     fires: regional && !regional.error ? regional.fires : [],
   });
 }

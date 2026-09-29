@@ -30,7 +30,9 @@ export function mergeStationFeeds(feeds: StationReading[][]): StationReading[] {
   const merged: StationReading[] = [];
   for (const feed of feeds) {
     for (const raw of feed) {
-      const station = raw.stale ? { ...raw, pm25: null, pm10: null, no2: null, so2: null, co: null, nh3: null, ozone: null } : raw;
+      const station = raw.stale
+        ? { ...raw, pm25: null, pm10: null, no2: null, so2: null, co: null, nh3: null, ozone: null, aqi: null, dominantPollutant: null }
+        : raw;
       if (!station.stale && !hasUsablePollutantData(station)) continue;
       const twin = merged.findIndex(
         (other) => haversineKm(other.lat, other.lng, station.lat, station.lng) <= SAME_MONITOR_KM,

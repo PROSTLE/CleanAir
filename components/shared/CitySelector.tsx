@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { CITIES, CITY_GROUPS } from "@/lib/cities";
 import { useCity } from "@/lib/cityContext";
 import { useT } from "@/lib/languageContext";
+import { useCityOverview } from "@/lib/useCityOverview";
 
 type CitySelectorProps = {
   onSelect?: () => void;
@@ -13,6 +14,13 @@ type CitySelectorProps = {
 /** Navbar pill + picker for the monitored city; styled like LanguageSelector. */
 export default function CitySelector({ onSelect }: CitySelectorProps = {}) {
   const t = useT();
+  // Live station counts, read when the picker is first shown.
+  const overview = useCityOverview();
+  const liveCount = (id: string) => {
+    if (overview.status !== "ready") return t("city_stations_loading");
+    const count = overview.data?.cities.find((entry) => entry.id === id)?.liveStations ?? 0;
+    return count > 0 ? t("city_stations_live").replace("{count}", String(count)) : t("city_stations_none");
+  };
   const { city, setCityId } = useCity();
   const [isOpen, setIsOpen] = useState(false);
 
@@ -142,7 +150,7 @@ export default function CitySelector({ onSelect }: CitySelectorProps = {}) {
                     </span>
                     <span style={{ fontSize: "0.8rem", color: "var(--muted)", fontWeight: 600 }}>{option.region}</span>
                     <span style={{ fontSize: "0.72rem", color: "var(--muted)" }}>
-                      {t(`city_coverage_${option.stations.coverage}`)}
+                      {liveCount(option.id)}
                       {option.group === "brics" ? ` · ${option.stations.network}` : ""}
                     </span>
                   </button>

@@ -25,6 +25,13 @@ export type StationReading = {
   nh3: number | null;
   ozone: number | null;
   lastUpdated: string | null;
+  /**
+   * The feed's own overall AQI for the station (US EPA scale, every pollutant
+   * it measures), when the feed publishes one (WAQI). Null otherwise.
+   */
+  aqi: number | null;
+  /** The pollutant driving that AQI, as the feed names it (pm25, o3, ...). */
+  dominantPollutant: string | null;
   source: StationFeed;
   /** Agency that operates the station, when the feed names it. */
   attribution: string | null;

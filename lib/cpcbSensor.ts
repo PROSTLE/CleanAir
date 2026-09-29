@@ -258,6 +258,8 @@ export async function fetchCpcbStations(): Promise<StationReading[]> {
       pm10: station.pm10,
       pm25: station.pm25,
       so2: station.so2,
+      aqi: null,
+      dominantPollutant: null,
       source: "CPCB" as const,
       attribution: "CPCB via data.gov.in",
       stationName: station.stationName,

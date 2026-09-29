@@ -90,7 +90,17 @@ export default function AqiGauge({ scale, value, title, caption, emptyText, comp
       ) : (
         <p className="aqi-gauge-empty">{emptyText ?? t("aqi_gauge_no_live")}</p>
       )}
-      {caption && <p className="aqi-gauge-caption">{caption}</p>}
+      {(caption || value) && (
+        <p className="aqi-gauge-caption">
+          {caption}
+          {caption && value ? " " : ""}
+          {value
+            ? value.basis === "published"
+              ? t("aqi_gauge_basis_published")
+              : t("aqi_gauge_basis_computed").replace("{pollutants}", value.pollutants.join(", "))
+            : ""}
+        </p>
+      )}
     </figure>
   );
 }
