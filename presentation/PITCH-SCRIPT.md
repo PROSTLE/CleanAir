@@ -1,6 +1,6 @@
 # VayuSetu: pitch script and demo guide
 
-This goes with `VayuSetu-BRICS.pdf` / `.pptx` (16 slides). The **"Say"** lines are written to be spoken, and the **"Do"** lines are the exact clicks.
+This goes with `VayuSetu-BRICS.pdf` / `.pptx` (12 slides; each slide also has these notes in PowerPoint's Presenter View). The **"Say"** lines are written to be spoken, and the **"Do"** lines are the exact clicks.
 
 Every number in the deck and in this script came from the live system on **29 Sep 2026**. If you present later, refresh them first (see [Before you start](#1-before-you-start-10-minutes-earlier)).
 
@@ -17,7 +17,7 @@ Open these tabs in this order, in one browser window (Chrome works best):
 | 1 | `/` | Landing page, to start the demo |
 | 2 | `/report` | Citizen reporting |
 | 3 | `/map` | Live map |
-| 4 | `/zone/8831aa42b7fffff` | Area page: Temple of Heaven, Beijing (the screenshot on slide 10) |
+| 4 | `/zone/8831aa42b7fffff` | Area page: Temple of Heaven, Beijing (the screenshot on slide 7) |
 | 5 | `/dashboard` | Command center, signed in as operator |
 | 6 | `/forecast` | Forecast |
 
@@ -32,127 +32,106 @@ Checklist:
 
 ---
 
-## 2. The full pitch (about 8 minutes: slides plus live demo)
+## 2. The full pitch (about 8 minutes: 12 slides plus live demo)
+
+The deck follows the judging weights: Gen AI and technical merit 40% (slides 4, 5, 6, 10), problem and impact 25% (slides 2, 11), innovation 25% (slides 3, 9), UX 10% (slides 7, 8).
 
 ### Slide 1: Title, VayuSetu (20 s)
-**Say:** "Hi, we're team ___. This is VayuSetu, 'bridge of air'. It finds pollution hotspots street by street in BRICS capitals, proves each one with independent evidence, and makes sure somebody actually fixes it."
+**Say:** "Hi, we're team ___. This is VayuSetu, 'bridge of air'. It finds the pollution hotspot on your street, proves it, and gets it fixed. It's live today in seven BRICS capitals, with 77 ground stations, 13 languages, and Gemini doing four jobs that are all grounded in evidence."
 
 ### Slide 2: The problem (40 s)
 **Say:**
-- "A city-wide AQI hides the air people actually breathe. One monitor can sit kilometres from a garbage fire or a construction site, so that source disappears into the average."
-- "Smoke doesn't stop at borders: crop burning in Punjab reaches Delhi, and haze moves across countries."
-- "And even when the data exists, it rarely reaches a crew. Nobody is told which street to inspect or which department owns the fix."
+- "According to the WHO, 99% of people live where its air-quality guidelines are not met."
+- "Outdoor air pollution caused 4.2 million premature deaths in 2019, and 89% of them were in low- and middle-income countries: most of BRICS."
+- "Three gaps make it worse. A garbage fire far from the nearest monitor vanishes into the city average. Smoke crosses borders. And even when the data exists, nobody tells a crew which street to go to."
 
-### Slide 3: Our solution (40 s)
+### Slide 3: Our solution (45 s)
 **Say:**
-- "We do four things: sense, verify, fuse, act."
-- "Citizens report with a photo, a voice note and a pin. Stations and satellites watch all the time."
-- "Gemini checks every photo. Then we combine the report with the nearest ground station, Sentinel-5P satellite data, NASA fire detections and live wind."
-- "Only then does it become a hotspot, which goes to the right department with a work order."
+- "Four steps: sense, verify, fuse, act."
+- "Citizens send a photo, a voice note and a pin, while stations and satellites watch all the time."
+- "Gemini checks the photo. We score it against the nearest station, the satellite, NASA fires and wind. Then it's ranked, dispatched with a work order, and confirmed by residents."
 
-**Point at the numbers:** 4 evidence streams, ~0.7 km² cells, 6 promotion tiers, 13 languages.
+**Point at the table:** "Compared with a typical AQI dashboard: street level instead of one city number, five kinds of evidence instead of one, every report checked, and it ends with a fix, not a chart."
 
-### Slide 4: Built for BRICS (25 s)
-**Say:** "It runs live in seven capitals: New Delhi, Beijing, Moscow, Pretoria, Abu Dhabi, Jakarta and Brasília. Each city uses its own country's legal limits, on one shared engine."
-
-### Slide 5: What makes it different (30 s)
-**Say:** "Most AQI dashboards show one number for the city. We work at street level, we combine five kinds of evidence, we don't take reports at face value, and we end with an action, not a chart."
-
-### Slide 6: How a hotspot is verified (40 s)
+### Slide 4: Architecture (45 s)
 **Say:**
-- "Every alert must be backed by independent evidence."
-- "A report goes through Gemini classification and an integrity check: photo time and GPS, duplicate photos, screenshots."
-- "Then it's scored against the station, the satellite, fires and wind."
-- "It becomes a hotspot only through one of these six tiers, strongest first. For example, a sensor and a satellite agreeing, or three different citizens."
-- "Stations and satellites can also raise hotspots on their own. A scan checks every city every 30 minutes, with no photo needed."
+- "Three boxes: inputs, Google Cloud, outputs."
+- "Citizens, ground stations, satellites and weather come in. Gemini, Earth Engine, BigQuery, Firebase, Maps Platform and Cloud Scheduler do the work. Residents, operators, agencies and everyone else get the results."
+- "The key decision is at the bottom. Every report, station reading and satellite pixel is placed on the same ~0.7 km² hexagon, so evidence from different sources can be compared in the same place."
 
-### Slide 7: Citizen reporting, then DEMO 1 (1 min)
-**Say:** "Reporting takes seconds, in your own language."
+### Slide 5: Gemini (50 s)
+**Say:**
+- "Gemini does four jobs."
+- "One: it checks every photo (smoke, dust, fire or haze) and flags screenshots, edits and stock images."
+- "Two: an operations copilot that answers by calling seven live tools."
+- "Three: work orders as structured output, in English and the city's language; for a repeat hotspot it asks for action at the source."
+- "Four: plain-language summaries for residents, in 13 languages, with read-aloud."
+- "Guardrails: only recorded facts go in, and every output lists what it used. There's a fallback model, and if both fail the page says so. Health advice comes from Google's Air Quality API, not from Gemini."
+
+### Slide 6: How a hotspot is verified (45 s)
+**Say:**
+- "No alert without independent evidence."
+- "Report, classify, integrity check (photo time and GPS, duplicate hashes, screenshots), then fuse with station, satellite, fires and wind, then dispatch."
+- "Six promotion tiers, strongest first."
+- "And 46 of our 48 incidents were raised automatically: the scan checks every station and the satellite every 30 minutes, with no photo needed."
+
+### Slide 7: For residents, then DEMO 1 (1 min 30 s)
+**Say:** "Reporting takes seconds, and every street gets its own page."
 
 **Do (tab 2, `/report`):**
 1. Click **Open camera or choose image** and pick your smoke photo.
-2. Under **What are you seeing?**, choose the hazard (for example garbage fire).
-3. Location: click **Detect my location**, or type in **Search for an area...**, or **Use map picker** to drop a pin.
-4. Optional: click **Speak** and say one sentence. It's transcribed into the note box.
-5. Click **Submit Report**.
-6. Show the result card, then click **Track this report**. Point at the live steps: received → analysed → corroborated → dispatched → resolved.
-7. On the track page, point at **About this area**. That leads into the next slides.
-
-**Say while it analyses:** "Gemini is checking the photo right now: is it smoke, dust, fire or haze, and is it a real photo, not a screenshot."
-
-> Submitting creates a real report in the live database. That's fine for a demo. If you'd rather not, just show the form and the slide.
-
-### Slide 8: Live map, then DEMO 2 (40 s)
-**Do (tab 3, `/map`, city = Beijing):**
-1. Point at the station pins, coloured by PM2.5.
-2. Click **3D** in the **Map view** switch to show the buildings, then **2D** to go back.
-3. Tick **Show satellite fires** to show the NASA FIRMS fire layer.
-4. Click any pin; the pop-up has **View this area →**. Click it (it opens the area page).
-
-**Say:** "Every official station, at its real coordinates, plus satellite fires and live hotspots."
-
-### Slide 9: Command center, then DEMO 3 (1 min 15 s)
-**Say:** "This is what a municipal operator sees: what to fix first, and why."
-
-**Do (tab 5, `/dashboard`, already signed in):**
-1. Point at the **Response queue**: ranked by evidence tier and confidence. Mention the chips: **Repeat hotspot**, **Overdue**, **Disputed by resident**.
-2. Click **Review** on the top row; the drawer opens.
-3. **Evidence trail:** the combined confidence, the station reading vs the national limit, the satellite window.
-4. **Last 30 days:** the history of this exact spot, and **Open area page**.
-5. **Field context → Load:** upwind sources from live wind, schools and hospitals within 1 km, and Google's cross-check.
-6. **Work order → Draft with Gemini:** an English and local-language work order to the right agency, citing its evidence.
-7. Don't click dispatch or **Resolve** on a real incident during the demo unless you mean it; it notifies reporters.
-8. Optional: scroll to **Operations copilot**, click the suggestion "Which open hotspots need a crew first, and why?", and show the **Data used** list.
-
-**Say:** "Every answer shows the evidence behind it. Nothing is generated without a source."
-
-### Slide 10: Area page (NEW), then DEMO 4 (1 min)
-**Say:** "Residents get the same evidence, in plain language. Every neighbourhood has its own page."
+2. Under **What are you seeing?**, choose the hazard.
+3. Location: click **Detect my location**, or type in **Search for an area...**, or **Use map picker**.
+4. Optional: click **Speak** and say one sentence.
+5. Click **Submit Report**, then **Track this report**. Point at the live steps.
 
 **Do (tab 4, `/zone/8831aa42b7fffff`):**
-1. **Right now:** the nearest station, 0.27 km away, against China's 75 µg/m³ limit.
-2. **What's happening:** Gemini's summary, written only from this page's evidence. Press **Read aloud**.
-3. **Health advice:** Google's advice. Open **Advice for children, older adults and other sensitive groups**.
-4. **Last 30 days:** the 30-day strip. A repeat hotspot would be flagged here.
-5. **Who's affected:** about 71,838 residents within 1 km (WorldPop), plus schools and hospitals.
-6. Optional: switch the globe (**EN**) to **Hindi**. The page and the Gemini summary switch language.
+1. **Right now:** the Temple of Heaven station, 0.27 km away, against China's 75 µg/m³ limit.
+2. **What's happening:** Gemini's summary. Press **Read aloud**.
+3. **Health advice:** open **Advice for children, older adults and other sensitive groups**.
+4. **Who's affected:** about 71,838 residents within 1 km.
 
-### Slide 11: Closing the loop (NEW) (50 s)
+> Submitting creates a real report in the live database. If you'd rather not, show the form and the slide.
+
+### Slide 8: For operators, then DEMO 2 (1 min 15 s)
+**Say:** "Operators see what to fix first, and why."
+
+**Do (tab 5, `/dashboard`, signed in):**
+1. **Response queue:** ranked by evidence; point at the **Repeat hotspot**, **Overdue** and **Disputed by resident** chips when they're present.
+2. Click **Review**. Show the **Evidence trail** and **Last 30 days**.
+3. **Field context → Load:** upwind sources, schools and hospitals, and Google's cross-check.
+4. **Work order → Draft with Gemini**.
+5. Don't press dispatch or **Resolve** on a real incident.
+
+**Do (tab 3, `/map`, city = Beijing):** click **3D**, tick **Show satellite fires**, click a pin, then **View this area →**.
+
+### Slide 9: Closing the loop (50 s)
 **Say:**
 - "Most systems stop at 'resolved'. We don't."
 - "When an operator marks a hotspot fixed, the people who reported it get 72 hours to answer: is it really fixed? On the website, or by replying FIXED or STILL on WhatsApp."
-- "If someone says 'still there', the incident reopens as Disputed and goes straight back to the queue."
-- "Every step is logged. So if the same spot keeps coming back (three episodes in 30 days, reports on three different days, or a fix that didn't hold), it's flagged as a repeat hotspot. The next work order asks for action at the source, not another clean-up."
-- "And every work order has a clock: 4, 24 or 72 hours, by priority."
+- "'Still there' reopens it as Disputed and sends it back to the queue."
+- "Every step is logged. So a spot that keeps coming back (three episodes in 30 days, reports on three days, or a fix that didn't hold) is flagged, and the next work order targets the source."
+- "We tested this end to end against the live database."
 
-### Slide 12: The intelligence layer (40 s)
-**Say:**
-- "Gemini does three jobs here: it checks photos, answers operators' questions using live data, and writes work orders."
-- "Forecasting runs on BigQuery with a BigQuery ML model, tested against a simple baseline."
-- "And cross-border attribution uses live wind and NASA fires across each capital's upwind region: Punjab and Haryana for Delhi, Hebei for Beijing."
-
-### Slide 13: Forecast pipeline (NEW), then DEMO 5 (50 s)
+### Slide 10: Forecasts in every capital, then DEMO 3 (45 s)
 **Say:**
 - "Every 30 minutes, Cloud Scheduler pulls every station into BigQuery."
-- "A forecast needs 12 hours of a station's own readings. Until a station has that, we use Google's Air Quality history, in a separate table, and the page says 'Modelled data'. Real readings always win."
+- "A forecast needs 12 hours of a station's own readings. Until a station has that, we use Google's modelled history from a separate table, and the page says 'Modelled data'."
+- "Real readings always win, and ARIMA_PLUS trains only on them. All seven capitals have a forecast."
 
-**Do (tab 6, `/forecast`, city = Beijing):**
-1. Click a zone tab. Point at the orange **Modelled data** badge (or **Live** once the station has 12 hours).
-2. Point at the chart legend (**Recent modelled**, or **Recent actual** for station data) and the **History source** box under Model comparison.
+**Do (tab 6, `/forecast`, city = Beijing):** point at the **Modelled data** badge (or **Live**) and at **History source** under Model comparison.
 
-### Slide 14: By the numbers (NEW) (30 s)
-**Say:** "These numbers come from the live system, not a projection:
-- 7 capitals;
-- 77 ground stations streaming into BigQuery;
-- 46 of 48 hotspots raised automatically from stations and satellites;
-- about 71,800 residents counted near one Beijing landmark;
-- a 72-hour window for residents to confirm a fix."
+### Slide 11: Built for BRICS (40 s)
+**Say:**
+- "Seven capitals, seven legal limits, one engine. New Delhi is judged at 60 micrograms, Beijing at 75, Moscow at 35, each by its own national law."
+- "77 stations are streaming, and 46 of 48 hotspots were raised automatically."
+- "A new capital is one configuration entry, with no code changes."
 
-### Slide 15: Federated by design (25 s)
-**Say:** "Each nation keeps its own rules and language. Adding a new capital is one configuration entry: its boundary, station network, legal limits, fire region, agencies and languages. No code changes."
-
-### Slide 16: Close (20 s)
-**Say:** "VayuSetu gives citizens a voice in their own language, operators a ranked list of evidence-backed hotspots, and nations one shared engine that keeps their own rules. Clean air, verified street by street, across BRICS. Thank you."
+### Slide 12: What's next, and close (40 s)
+**Say:**
+- "In the next 90 days: a pilot with one municipal team, WhatsApp alerts when a hotspot is confirmed near you, and an after-photo from the crew as proof of the fix."
+- "VayuSetu gives citizens a voice in their own language, operators an evidence-backed list, and nations one engine that keeps their own rules."
+- "Clean air, verified street by street, across BRICS. Thank you."
 
 ---
 
@@ -165,12 +144,12 @@ Use it for a submission video: no live typing, just screen recording plus voice.
 | 0:00–0:15 | Slide 1 | "VayuSetu finds pollution hotspots street by street in seven BRICS capitals, proves each one, and makes sure it's fixed." |
 | 0:15–0:35 | Slide 2 | "A city AQI hides the garbage fire down the road. Smoke crosses borders, and data rarely reaches a crew." |
 | 0:35–0:55 | Recording: `/report` | Pick a photo, choose the hazard, drop a pin, press **Submit Report**. "Citizens report in 13 languages; Gemini checks the photo." |
-| 0:55–1:15 | Slide 6 | "A report becomes a hotspot only with independent evidence: station, satellite, fires, wind or other citizens." |
+| 0:55–1:15 | Slides 5–6 | "Gemini checks the photo, and a report becomes a hotspot only with independent evidence: station, satellite, fires, wind or other citizens." |
 | 1:15–1:40 | Recording: `/dashboard` | Click **Review**, then **Load**, then **Draft with Gemini**. "Operators see what to fix first and why, with a work order to the right agency." |
 | 1:40–2:05 | Recording: `/zone/8831aa42b7fffff` | Scroll the page; press **Read aloud**. "Every neighbourhood gets a page: what's happening, health advice, who's affected." |
-| 2:05–2:25 | Slide 11 | "When it's marked fixed, residents confirm it. 'Still there' reopens it, and repeat spots are flagged." |
-| 2:25–2:45 | Slide 13, then `/forecast` | "Forecasts for every capital from BigQuery, clearly labelled when the history is modelled." |
-| 2:45–3:00 | Slide 16 | "Clean air, verified street by street, across BRICS." |
+| 2:05–2:25 | Slide 9 | "When it's marked fixed, residents confirm it. 'Still there' reopens it, and repeat spots are flagged." |
+| 2:25–2:45 | Slide 10, then `/forecast` | "Forecasts for every capital from BigQuery, clearly labelled when the history is modelled." |
+| 2:45–3:00 | Slide 12 | "Clean air, verified street by street, across BRICS." |
 
 ---
 
@@ -183,7 +162,7 @@ Use it for a submission video: no live typing, just screen recording plus voice.
 | Report stays on "Analysing" | Classification queue | "It runs on the server; the scheduler retries anything missed." Show slide 7 instead. |
 | Dashboard queue is empty | No open hotspot in that city now | "Nothing open right now, which is also real." Switch city, or open the map. |
 | No **Read aloud** button | No voice for that language on this laptop | Skip it; it's hidden on purpose rather than reading with the wrong voice. |
-| Wi-Fi fails | — | Present from the PDF; slides 7–10 and 13 have real screenshots and flow charts. |
+| Wi-Fi fails | — | Present from the PDF; slides 4, 6 and 9–10 are flow charts, and slides 7–8 have real screenshots. |
 
 ---
 
@@ -222,7 +201,7 @@ It runs on Firebase App Hosting and pay-as-you-go Google APIs. Paid calls are ei
 
 ## 6. Refreshing the numbers before a later pitch
 
-The numbers on slides 13 and 14 were taken on 29 Sep 2026 and will grow:
+The numbers on slides 1, 6, 10 and 11 were taken on 29 Sep 2026 and will grow:
 - **Station count and table rows:** in the BigQuery console, the dataset `cleanair_analytics` (tables `cpcb_live_readings` and `google_aq_history`).
 - **Incident counts:** Firestore → `incidents` (and the `source` field for the automatic ones).
 - **Residents near the Temple of Heaven:** open tab 4 and read **Who's affected**.
