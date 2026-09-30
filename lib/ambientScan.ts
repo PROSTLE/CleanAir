@@ -516,7 +516,7 @@ async function resolveInactiveAmbientDocs(city: CityConfig, activeH3CellIds: Set
 }
 
 async function getAmbientScanTargets(city: CityConfig): Promise<AmbientScanTarget[]> {
-  const stationTargets = (await fetchCityStationReadings(city))
+  const stationTargets = (await fetchCityStationReadings(city, { preferLive: true }))
     .map((station) => ({
       label: station.stationName,
       lat: station.lat,

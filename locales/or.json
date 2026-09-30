@@ -498,5 +498,8 @@
   "live_cities_updated": "ଷ୍ଟେସନ ଫିଡ ଓ Firestore ରୁ {time}ରେ ଲାଇଭ ପଢ଼ାଯାଇଛି।",
   "city_stations_live": "{count}ଟି ଲାଇଭ ଷ୍ଟେସନ",
   "city_stations_none": "ଏବେ କୌଣସି ଲାଇଭ ଷ୍ଟେସନ ନାହିଁ",
-  "city_stations_loading": "ଷ୍ଟେସନ ଯାଞ୍ଚ ହେଉଛି…"
+  "city_stations_loading": "ଷ୍ଟେସନ ଯାଞ୍ଚ ହେଉଛି…",
+  "dash_reports_title": "ସମର୍ଥନ ଅପେକ୍ଷାରେ ଥିବା ନାଗରିକ ରିପୋର୍ଟ",
+  "dash_reports_detail": "Gemini ଶ୍ରେଣୀଭୁକ୍ତ କରିଛି। ଷ୍ଟେସନ, ଉପଗ୍ରହ ବା ଅନ୍ୟ ବାସିନ୍ଦା ସମର୍ଥନ କଲେ ରିପୋର୍ଟ ପ୍ରତିକ୍ରିୟା ଧାଡ଼ିରେ ଯୋଗ ଦିଏ।",
+  "dash_reports_empty": "{city}ରେ କୌଣସି ନାଗରିକ ରିପୋର୍ଟ ଅପେକ୍ଷାରେ ନାହିଁ।"
 }

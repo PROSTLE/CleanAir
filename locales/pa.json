@@ -498,5 +498,8 @@
   "live_cities_updated": "ਸਟੇਸ਼ਨ ਫੀਡਾਂ ਅਤੇ Firestore ਤੋਂ {time} 'ਤੇ ਲਾਈਵ ਪੜ੍ਹਿਆ।",
   "city_stations_live": "{count} ਲਾਈਵ ਸਟੇਸ਼ਨ",
   "city_stations_none": "ਇਸ ਸਮੇਂ ਕੋਈ ਲਾਈਵ ਸਟੇਸ਼ਨ ਨਹੀਂ",
-  "city_stations_loading": "ਸਟੇਸ਼ਨ ਜਾਂਚੇ ਜਾ ਰਹੇ ਹਨ…"
+  "city_stations_loading": "ਸਟੇਸ਼ਨ ਜਾਂਚੇ ਜਾ ਰਹੇ ਹਨ…",
+  "dash_reports_title": "ਪੁਸ਼ਟੀ ਦੀ ਉਡੀਕ ਵਿੱਚ ਨਾਗਰਿਕ ਰਿਪੋਰਟਾਂ",
+  "dash_reports_detail": "Gemini ਨੇ ਵਰਗੀਕ੍ਰਿਤ ਕੀਤਾ। ਸਟੇਸ਼ਨ, ਸੈਟੇਲਾਈਟ ਜਾਂ ਹੋਰ ਵਸਨੀਕਾਂ ਦੀ ਪੁਸ਼ਟੀ ਤੋਂ ਬਾਅਦ ਰਿਪੋਰਟ ਜਵਾਬ ਕਤਾਰ ਵਿੱਚ ਜਾਂਦੀ ਹੈ।",
+  "dash_reports_empty": "{city} ਵਿੱਚ ਕੋਈ ਨਾਗਰਿਕ ਰਿਪੋਰਟ ਉਡੀਕ ਵਿੱਚ ਨਹੀਂ।"
 }

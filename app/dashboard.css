@@ -514,3 +514,12 @@
   border-radius: 12px;
   background: var(--surface);
 }
+
+/* Report id under a queued citizen report, so a resident's id can be matched. */
+.svd-report-id {
+  display: block;
+  margin-top: 2px;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 0.7rem;
+  color: var(--sv-muted);
+}

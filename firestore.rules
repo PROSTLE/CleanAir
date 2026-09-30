@@ -41,6 +41,8 @@ service cloud.firestore {
     match /reportTokens/{reportId} { allow read, write: if false; }
     // OpenStreetMap places per city, served through /api/city-places only.
     match /osmPlaces/{cityId} { allow read, write: if false; }
+    // Last merged station list per city, for servers whose feed caches are cold.
+    match /stationSnapshots/{cityId} { allow read, write: if false; }
 
     match /{document=**} {
       allow read, write: if false;

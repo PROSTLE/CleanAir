@@ -498,5 +498,8 @@
   "live_cities_updated": "స్టేషన్ ఫీడ్‌లు మరియు Firestore నుండి {time}కి లైవ్‌గా చదివాం.",
   "city_stations_live": "{count} లైవ్ స్టేషన్లు",
   "city_stations_none": "ప్రస్తుతం లైవ్ స్టేషన్ లేదు",
-  "city_stations_loading": "స్టేషన్లు తనిఖీ చేస్తున్నాం…"
+  "city_stations_loading": "స్టేషన్లు తనిఖీ చేస్తున్నాం…",
+  "dash_reports_title": "నిర్ధారణ కోసం వేచి ఉన్న పౌర నివేదికలు",
+  "dash_reports_detail": "Gemini వర్గీకరించింది. స్టేషన్, ఉపగ్రహం లేదా ఇతర నివాసులు నిర్ధారిస్తే నివేదిక స్పందన క్యూలో చేరుతుంది.",
+  "dash_reports_empty": "{city}లో వేచి ఉన్న పౌర నివేదికలు లేవు."
 }

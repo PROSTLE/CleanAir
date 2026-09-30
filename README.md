@@ -6,6 +6,10 @@ Built on Google's AI and Cloud stack: Gemini, Earth Engine, BigQuery / BigQuery 
 
 **Live deployment:** https://cleanair-backend--cleanair-clear-streets.asia-southeast1.hosted.app
 
+**Demo video:** https://drive.google.com/file/d/1O9Zqd0Cct6kbFqfVLykeJjvUHP2Ka6jH/view?usp=sharing
+
+**Presentation (PDF):** [VayuSetu_Team Syntax.pdf](VayuSetu_Team%20Syntax.pdf)
+
 Pick a city in the navbar, from two groups: **Indian cities** (New Delhi, Mumbai, Kolkata, Chennai, Bengaluru, Hyderabad) and **BRICS capitals** (Beijing, Moscow, Pretoria, Abu Dhabi, Jakarta, Brasília). Every page below follows it.
 - `/report` — citizen reporting (photo, voice note in the city's language, 13 UI languages)
 - `/map` — public hotspot map with a 2D/3D city view (OpenStreetMap buildings), ground stations, the city AQI gauge and the satellite fire layer
@@ -109,11 +113,27 @@ As of 29 Sep 2026: data.gov.in times out, and WAQI's relay has live stations onl
 
 ### AQI gauge
 
-`components/shared/AqiGauge.tsx` draws a 0–500 dial in six colour bands (`lib/aqiScales.ts`): India's National AQI (CPCB 2014 breakpoints, `lib/indiaAqi.ts`) in Indian cities, and the US EPA AQI (`lib/usAqi.ts`) in the BRICS capitals, the index their WAQI stations publish. The map and dashboard show the city value as the median of live stations; the area page shows the nearest live station. The official AQI uses 24-hour averages; these are estimates from the latest PM2.5 and PM10 and are labelled that way. With no live station, the dial stays empty and says so.
+`components/shared/AqiGauge.tsx` draws a 0–500 dial in six colour bands (`lib/aqiScales.ts`): India's National AQI (CPCB 2014 breakpoints, `lib/indiaAqi.ts`) in Indian cities, and the US EPA AQI (`lib/usAqi.ts`) in the BRICS capitals, the index their WAQI stations publish. The map and dashboard show the city value as the median of live stations; the area page shows the nearest live station. Map pins show each station's AQI on the same scale, never a bare concentration.
+
+- **BRICS capitals:** each station's own overall AQI as WAQI publishes it (every pollutant it measures, ozone included), with WAQI's dominant pollutant. Only a station without a published AQI falls back to a PM estimate.
+- **Indian cities:** computed from every pollutant the station reports (PM2.5, PM10, NO₂, SO₂, CO, O₃, NH₃ with CPCB's breakpoints); the gauge lists which ones it used. The official index uses 24-hour averages, so these are labelled as estimates from the latest readings.
+
+With no live station, the dial stays empty and says so.
 
 ### 3D city view
 
-The public map's 3D switch tilts the camera and raises OpenStreetMap buildings (OpenFreeMap vector tiles) for whichever city is selected, stepping in to street level (zoom 14) because buildings only exist from zoom 13. Only Delhi has curated known-source lists, monitored areas and forecast zones; the other cities forecast at their station locations, without Delhi's diurnal profile.
+The public map's 3D switch tilts the camera and raises OpenStreetMap buildings (OpenFreeMap vector tiles) for whichever city is selected, stepping in to street level (zoom 14) because buildings only exist from zoom 13.
+
+### Nothing typed in
+
+Every place, station and count the app shows comes from a live source:
+
+- **Pollution sources and monitored areas** are OpenStreetMap's mapped landfills, named industrial areas and bus terminals inside each city, fetched through the Overpass API (`lib/server/osmPlaces.ts`, `/api/city-places`), stored in Firestore `osmPlaces` and refreshed weekly. Each carries its OSM id. They feed upwind attribution, the ambient scan's no-station spots and the map's area shortcuts, in all twelve cities.
+- **Forecast zones** are each city's monitoring stations, Delhi included.
+- **Landing page "Air quality right now"** and the city picker's station counts come from `/api/cities/overview`: live and offline stations, the city AQI and open hotspots per city.
+- **Public map feed** shows open hotspots from `incidents` (including those the automatic scan raised) alongside citizen reports. With none open it shows when the scan last ran and how many places it checked (`/api/scan-status`, written by each scan to `system/ambientScan-<city>`).
+
+Only Delhi's forecast uses a measured diurnal PM2.5 profile; the other cities forecast without one.
 
 ## Features
 

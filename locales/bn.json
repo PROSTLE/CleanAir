@@ -498,5 +498,8 @@
   "live_cities_updated": "স্টেশন ফিড ও Firestore থেকে {time}-এ লাইভ পড়া।",
   "city_stations_live": "{count}টি লাইভ স্টেশন",
   "city_stations_none": "এখন কোনো লাইভ স্টেশন নেই",
-  "city_stations_loading": "স্টেশন পরীক্ষা করা হচ্ছে…"
+  "city_stations_loading": "স্টেশন পরীক্ষা করা হচ্ছে…",
+  "dash_reports_title": "সমর্থনের অপেক্ষায় নাগরিক রিপোর্ট",
+  "dash_reports_detail": "Gemini শ্রেণিবদ্ধ করেছে। স্টেশন, উপগ্রহ বা অন্য বাসিন্দারা সমর্থন করলে রিপোর্ট প্রতিক্রিয়া সারিতে যায়।",
+  "dash_reports_empty": "{city}-এ কোনো নাগরিক রিপোর্ট অপেক্ষায় নেই।"
 }

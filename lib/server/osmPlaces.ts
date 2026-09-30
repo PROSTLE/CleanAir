@@ -12,9 +12,17 @@ import { MONITORED_LIMITS, selectPlaces, type OsmPlace, type OverpassElement } f
 // Results are stored in Firestore (`osmPlaces/{cityId}`) and refreshed weekly;
 // if Overpass is unreachable and nothing is stored, a city simply has no
 // places, and attribution falls back to fires and other incidents.
-const OVERPASS_ENDPOINTS = ["https://overpass-api.de/api/interpreter", "https://overpass.kumi.systems/api/interpreter"];
+// Public Overpass instances, tried in order; some throttle shared cloud IPs.
+const OVERPASS_ENDPOINTS = [
+  "https://overpass-api.de/api/interpreter",
+  "https://overpass.private.coffee/api/interpreter",
+  "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+  "https://overpass.kumi.systems/api/interpreter",
+];
 const REFRESH_AFTER_MS = 7 * 24 * 3_600_000;
 const MEMORY_TTL_MS = 6 * 3_600_000;
+// After a failed fetch with nothing stored, wait before asking Overpass again.
+const FAILURE_COOLDOWN_MS = 15 * 60 * 1000;
 const REQUEST_TIMEOUT_MS = 100_000;
 const USER_AGENT = "VayuSetu/1.0 (air-quality hotspot research)";
 
@@ -53,6 +61,7 @@ async function runOverpass(query: string): Promise<OverpassElement[]> {
       return payload.elements ?? [];
     } catch (error) {
       lastError = error;
+      console.warn(`Overpass ${endpoint} failed`, error instanceof Error ? error.message : error);
     }
   }
   throw lastError instanceof Error ? lastError : new Error("Overpass unavailable.");
@@ -89,7 +98,7 @@ export async function getCityPlaces(city: CityConfig): Promise<OsmPlace[]> {
     inFlight.set(city.id, pending);
   }
   const places = await pending;
-  if (places.length > 0) memory.set(city.id, { expiresAt: Date.now() + MEMORY_TTL_MS, places });
+  memory.set(city.id, { expiresAt: Date.now() + (places.length > 0 ? MEMORY_TTL_MS : FAILURE_COOLDOWN_MS), places });
   return places;
 }
 

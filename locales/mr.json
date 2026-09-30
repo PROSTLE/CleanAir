@@ -498,5 +498,8 @@
   "live_cities_updated": "स्टेशन फीड आणि Firestore मधून {time} ला लाइव्ह वाचले.",
   "city_stations_live": "{count} लाइव्ह स्टेशन",
   "city_stations_none": "सध्या कोणतेही लाइव्ह स्टेशन नाही",
-  "city_stations_loading": "स्टेशन तपासत आहोत…"
+  "city_stations_loading": "स्टेशन तपासत आहोत…",
+  "dash_reports_title": "पुष्टीच्या प्रतीक्षेतील नागरिक अहवाल",
+  "dash_reports_detail": "Gemini ने वर्गीकृत केले. स्टेशन, उपग्रह किंवा इतर रहिवाशांनी पुष्टी केल्यावर अहवाल प्रतिसाद रांगेत जातो.",
+  "dash_reports_empty": "{city} मध्ये कोणताही नागरिक अहवाल प्रतीक्षेत नाही."
 }

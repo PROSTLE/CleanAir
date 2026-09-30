@@ -32,7 +32,9 @@ import type { IntegrityFlag, ReportIntegrity } from "@/lib/types";
 
 const IMAGE_FETCH_TIMEOUT_MS = 10_000;
 const GEMINI_REQUEST_TIMEOUT_MS = 20_000;
-const CONTEXT_LOOKUP_TIMEOUT_MS = 12_000;
+// Runs after the reporter already has a response; a cold server needs time to
+// reach Earth Engine and the station feeds.
+const CONTEXT_LOOKUP_TIMEOUT_MS = 25_000;
 const PROMOTION_TIMEOUT_MS = 10_000;
 const FIRE_CONTEXT_RADIUS_KM = 5;
 export const MAX_CLASSIFICATION_ATTEMPTS = 3;

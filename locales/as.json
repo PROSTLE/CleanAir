@@ -498,5 +498,8 @@
   "live_cities_updated": "ষ্টেচন ফিড আৰু Firestoreৰ পৰা {time}ত লাইভ পঢ়া হৈছে।",
   "city_stations_live": "{count}টা লাইভ ষ্টেচন",
   "city_stations_none": "এতিয়া কোনো লাইভ ষ্টেচন নাই",
-  "city_stations_loading": "ষ্টেচন পৰীক্ষা কৰি থকা হৈছে…"
+  "city_stations_loading": "ষ্টেচন পৰীক্ষা কৰি থকা হৈছে…",
+  "dash_reports_title": "সমৰ্থনৰ অপেক্ষাত থকা নাগৰিক প্ৰতিবেদন",
+  "dash_reports_detail": "Gemini-এ শ্ৰেণীবদ্ধ কৰিছে। ষ্টেচন, উপগ্ৰহ বা আন বাসিন্দাই সমৰ্থন কৰিলে প্ৰতিবেদন সঁহাৰি শাৰীত যোগ দিয়ে।",
+  "dash_reports_empty": "{city}ত কোনো নাগৰিক প্ৰতিবেদন অপেক্ষাত নাই।"
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { getIncidentAge, getRecommendedAction, getRecommendedActionKey } from "@/components/command/commandData";
 import { useOperator } from "@/components/dashboard/OperatorContext";
 import Icon, { HAZARD_ICON } from "@/components/shared/Icon";
@@ -248,7 +249,9 @@ export default function IncidentDrawer({
     resolved: isResolved,
   });
 
-  return (
+  // Rendered into <body> so no page container's stacking layer can put the
+  // sticky navbar above the drawer's title and close button.
+  return createPortal(
     <div className="svd-drawer-backdrop" role="presentation" onClick={onClose}>
       <aside
         ref={panelRef}
@@ -693,6 +696,7 @@ export default function IncidentDrawer({
           )}
         </footer>
       </aside>
-    </div>
+    </div>,
+    document.body,
   );
 }

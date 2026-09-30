@@ -30,8 +30,30 @@ async function step(name: string, fn: () => Promise<Record<string, unknown>>): P
   }
 }
 
+// A report checked while the server was cold can be stored with no station or
+// satellite evidence even though both exist. Send those back through the
+// normal check once, within a day of the report.
+const EVIDENCE_RECHECK_WINDOW_MS = 24 * 3_600_000;
+
+async function requeueReportsMissingEvidence() {
+  const snapshot = await adminDb.collection("reports").where("status", "==", "classified").limit(200).get();
+  const now = Date.now();
+  const due = snapshot.docs.filter((doc) => {
+    const data = doc.data();
+    const classifiedMs = data.classifiedAt?.toDate?.().getTime?.() ?? 0;
+    const missingSensor = data.validation?.sensor?.source === "unavailable";
+    const missingSatellite = data.validation?.satellite?.lastPassTime === "unavailable";
+    return !data.evidenceRecheckedAt && now - classifiedMs <= EVIDENCE_RECHECK_WINDOW_MS && (missingSensor || missingSatellite);
+  });
+  await Promise.all(
+    due.map((doc) => doc.ref.update({ status: "pending", classificationAttempts: 0, evidenceRecheckedAt: adminServerTimestamp() })),
+  );
+  return due.length;
+}
+
 /** Reports whose background classification never finished (instance recycled, provider outage). */
 async function sweepUnclassifiedReports(origin: string) {
+  const requeued = await requeueReportsMissingEvidence().catch(() => 0);
   const snapshot = await adminDb
     .collection("reports")
     .where("status", "in", ["pending", "classification_failed"])
@@ -56,12 +78,12 @@ async function sweepUnclassifiedReports(origin: string) {
       failed += 1;
     }
   }
-  return { candidates: snapshot.size, attempted: due.length, classified, failed };
+  return { requeued, candidates: snapshot.size, attempted: due.length, classified, failed };
 }
 
 async function recordLiveReadings() {
   if (!isBigQueryConfigured()) return { skipped: "BIGQUERY_PROJECT_ID is not set." };
-  const stations = await fetchAllCityStationReadings();
+  const stations = await fetchAllCityStationReadings({ preferLive: true });
   if (stations.length === 0) return { skipped: "No station feed returned readings." };
   return { stations: stations.length, ...(await insertLiveReadings(stations)) };
 }

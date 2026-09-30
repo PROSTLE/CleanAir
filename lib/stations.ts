@@ -6,7 +6,9 @@ import { haversineKm } from "@/lib/geo";
 import { fetchOpenAqStations } from "@/lib/server/openaq";
 import { fetchWaqiStations } from "@/lib/server/waqi";
 import type { StationFeed } from "@/lib/stationFeeds";
+import { adminDb, adminServerTimestamp } from "@/lib/firebaseAdmin";
 import { hasUsablePollutantData, mergeStationFeeds } from "@/lib/stationMerge";
+import { isSensorReadingFresh } from "@/lib/supportEvidence";
 
 // One station interface over every public feed: OpenAQ, WAQI and CPCB via
 // data.gov.in, merged per city (see lib/cities.ts). Names and coordinates
@@ -93,25 +95,98 @@ async function fetchFeed(city: CityConfig, source: StationSource): Promise<Stati
   }
 }
 
-async function fetchNetworkStations(city: CityConfig): Promise<StationReading[]> {
-  const feeds = await Promise.all(city.stations.sources.map((source) => fetchFeed(city, source)));
-  return mergeStationFeeds(feeds);
+// A freshly started server has cold feed caches, and the feeds can take tens
+// of seconds to answer; a report checked in that window used to find "no
+// station". So every live fetch also stores the merged list in Firestore
+// (`stationSnapshots/{cityId}`), and a cold server answers from that snapshot
+// while it refreshes the feeds in the background. Readings keep their own
+// timestamps, so a snapshot never makes an old reading look live.
+const MERGED_TTL_MS = 10 * 60 * 1000;
+const SNAPSHOT_MAX_AGE_MS = 90 * 60 * 1000;
+const SNAPSHOT_SAVE_INTERVAL_MS = 10 * 60 * 1000;
+const merged = new Map<string, { expiresAt: number; stations: StationReading[] }>();
+const refreshing = new Map<string, Promise<StationReading[]>>();
+const lastSnapshotSave = new Map<string, number>();
+
+type FetchOptions = {
+  /** Wait for the feeds themselves (scheduled ingest and scans), not a stored snapshot. */
+  preferLive?: boolean;
+};
+
+function refreshStale(station: StationReading): StationReading {
+  if (station.stale || isSensorReadingFresh(station.lastUpdated)) return station;
+  return { ...station, stale: true, pm25: null, pm10: null, no2: null, so2: null, co: null, nh3: null, ozone: null, aqi: null, dominantPollutant: null };
+}
+
+async function saveSnapshot(city: CityConfig, stations: StationReading[]) {
+  const now = Date.now();
+  if (now - (lastSnapshotSave.get(city.id) ?? 0) < SNAPSHOT_SAVE_INTERVAL_MS) return;
+  lastSnapshotSave.set(city.id, now);
+  await adminDb
+    .collection("stationSnapshots")
+    .doc(city.id)
+    .set({ savedAt: adminServerTimestamp(), stations })
+    .catch((error) => console.warn(`Station snapshot for ${city.name} not saved`, error instanceof Error ? error.message : error));
+}
+
+async function readSnapshot(city: CityConfig): Promise<StationReading[] | null> {
+  const doc = await adminDb.collection("stationSnapshots").doc(city.id).get();
+  const data = doc.data();
+  const savedAt = data?.savedAt?.toDate?.()?.getTime?.() ?? 0;
+  if (!Array.isArray(data?.stations) || Date.now() - savedAt > SNAPSHOT_MAX_AGE_MS) return null;
+  return (data.stations as StationReading[]).map(refreshStale);
+}
+
+function refreshLive(city: CityConfig): Promise<StationReading[]> {
+  let pending = refreshing.get(city.id);
+  if (!pending) {
+    pending = (async () => {
+      const feeds = await Promise.all(city.stations.sources.map((source) => fetchFeed(city, source)));
+      const stations = mergeStationFeeds(feeds);
+      if (stations.length > 0) {
+        merged.set(city.id, { expiresAt: Date.now() + MERGED_TTL_MS, stations });
+        await saveSnapshot(city, stations);
+      }
+      return stations;
+    })().finally(() => refreshing.delete(city.id));
+    refreshing.set(city.id, pending);
+  }
+  return pending;
+}
+
+async function fetchNetworkStations(city: CityConfig, options: FetchOptions = {}): Promise<StationReading[]> {
+  const hit = merged.get(city.id);
+  if (hit && hit.expiresAt > Date.now() && !options.preferLive) return hit.stations;
+  const live = refreshLive(city);
+  if (!options.preferLive) {
+    const snapshot = await readSnapshot(city).catch(() => null);
+    if (snapshot) {
+      live.catch(() => undefined); // keeps refreshing the cache in the background
+      return snapshot;
+    }
+  }
+  const stations = await live;
+  if (stations.length > 0 || !options.preferLive) return stations;
+  // Every feed failed: a recent snapshot is still real data.
+  return (await readSnapshot(city).catch(() => null)) ?? [];
 }
 
 /** Every known monitor inside the city, live or stale, for maps and zone pickers. */
-export async function fetchCityStationDirectory(city: CityConfig): Promise<StationReading[]> {
-  return (await fetchNetworkStations(city)).filter((station) => isInCity(city, station.lat, station.lng));
+export async function fetchCityStationDirectory(city: CityConfig, options: FetchOptions = {}): Promise<StationReading[]> {
+  return (await fetchNetworkStations(city, options)).filter((station) => isInCity(city, station.lat, station.lng));
 }
 
 /** Stations inside the city boundary with a reading from the last day. */
-export async function fetchCityStationReadings(city: CityConfig): Promise<StationReading[]> {
-  return (await fetchCityStationDirectory(city)).filter((station) => !station.stale);
+export async function fetchCityStationReadings(city: CityConfig, options: FetchOptions = {}): Promise<StationReading[]> {
+  return (await fetchCityStationDirectory(city, options)).filter((station) => !station.stale);
 }
 
 /** Every monitored city's live stations, tagged with the city they belong to. */
-export async function fetchAllCityStationReadings() {
+export async function fetchAllCityStationReadings(options: FetchOptions = {}) {
   const perCity = await Promise.all(
-    CITIES.map(async (city) => (await fetchCityStationReadings(city)).map((station) => ({ ...station, cityId: city.id }))),
+    CITIES.map(async (city) =>
+      (await fetchCityStationReadings(city, options)).map((station) => ({ ...station, cityId: city.id })),
+    ),
   );
   return perCity.flat();
 }

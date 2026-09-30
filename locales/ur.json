@@ -498,5 +498,8 @@
   "live_cities_updated": "اسٹیشن فیڈز اور Firestore سے {time} پر لائیو پڑھا گیا۔",
   "city_stations_live": "{count} لائیو اسٹیشن",
   "city_stations_none": "اس وقت کوئی لائیو اسٹیشن نہیں",
-  "city_stations_loading": "اسٹیشن جانچے جا رہے ہیں…"
+  "city_stations_loading": "اسٹیشن جانچے جا رہے ہیں…",
+  "dash_reports_title": "تصدیق کی منتظر شہری رپورٹیں",
+  "dash_reports_detail": "Gemini نے درجہ بندی کی۔ اسٹیشن، سیٹلائٹ یا دیگر رہائشیوں کی تصدیق کے بعد رپورٹ جوابی قطار میں شامل ہوتی ہے۔",
+  "dash_reports_empty": "{city} میں کوئی شہری رپورٹ منتظر نہیں۔"
 }

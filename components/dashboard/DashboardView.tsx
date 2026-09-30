@@ -488,6 +488,61 @@ export default function DashboardView() {
         )}
       </section>
 
+      {/* Citizen reports Gemini has classified but no independent evidence has
+          backed yet. They join the response queue once promoted. */}
+      <section className="svd-card svd-queue" aria-labelledby="svd-reports-title">
+        <header className="svd-card-head svd-card-head-split">
+          <div>
+            <h2 className="vs-title" id="svd-reports-title">
+              <Icon name="citizens" size={17} />
+              {t("dash_reports_title")} ({queue.length})
+            </h2>
+            <p>{t("dash_reports_detail")}</p>
+          </div>
+        </header>
+        {queue.length === 0 ? (
+          <p className="svd-empty">{t("dash_reports_empty").replace("{city}", city.name)}</p>
+        ) : (
+          <div className="svd-table-scroll">
+            <table className="svd-table">
+              <thead>
+                <tr>
+                  <th scope="col">{t("dash_col_location")}</th>
+                  <th scope="col">{t("dash_col_hazard")}</th>
+                  <th scope="col">{t("dash_col_confidence")}</th>
+                  <th scope="col">{t("dash_col_age")}</th>
+                  <th scope="col">{t("dash_col_status")}</th>
+                  <th scope="col">{t("dash_col_action")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[...queue]
+                  .sort((a, b) => (b.timestamp ?? "").localeCompare(a.timestamp ?? ""))
+                  .slice(0, 20)
+                  .map((report) => (
+                    <tr key={report.id}>
+                      <td>
+                        {report.neighborhood || EMPTY}
+                        {/* The report's own id, as the reporter sees it on their tracking page. */}
+                        <small className="svd-report-id">{report.id.replace(/^firestore-/, "")}</small>
+                      </td>
+                      <td>{t(`hazard_${report.hazardType}`)}</td>
+                      <td>{report.aiConfidence ? `${report.aiConfidence}%` : EMPTY}</td>
+                      <td>{report.timestamp ? getIncidentAge(report.timestamp) : EMPTY}</td>
+                      <td className="svd-status">{formatStatus(report.status)}</td>
+                      <td>
+                        <button type="button" className="svd-action" onClick={() => setSelectedId(report.id)}>
+                          {t("dash_review")}
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
       <section className="svd-card svd-map-card">
         <header className="svd-card-head svd-card-head-split">
           <div>

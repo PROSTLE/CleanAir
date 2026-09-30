@@ -792,5 +792,8 @@
   "live_cities_updated": "Read live from the station feeds and Firestore at {time}.",
   "city_stations_live": "{count} live stations",
   "city_stations_none": "No live stations right now",
-  "city_stations_loading": "Checking stations…"
+  "city_stations_loading": "Checking stations…",
+  "dash_reports_title": "Citizen reports awaiting corroboration",
+  "dash_reports_detail": "Classified by Gemini. Each joins the response queue once a station, the satellite or other residents back it up.",
+  "dash_reports_empty": "No citizen reports waiting in {city}."
 }
