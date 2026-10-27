@@ -65,8 +65,6 @@ export interface CityConfig {
   localLanguage: { code: string; name: string } | null;
   /** Speech-to-Text fallback for voice notes (they normally follow the UI language). */
   speechLanguage: string;
-  /** Delhi has a measured diurnal PM2.5 profile; other cities forecast without one. */
-  forecastProfile: "delhi" | "generic";
 }
 
 type CitySeed = Omit<CityConfig, "boundary" | "bounds">;
@@ -106,7 +104,6 @@ const SEEDS: CitySeed[] = [
     speechLanguage: "hi-IN",
     group: "india",
     aqiScale: "india",
-    forecastProfile: "delhi",
   },
   {
     id: "mumbai",
@@ -131,7 +128,6 @@ const SEEDS: CitySeed[] = [
     speechLanguage: "mr-IN",
     group: "india",
     aqiScale: "india",
-    forecastProfile: "generic",
   },
   {
     id: "kolkata",
@@ -156,7 +152,6 @@ const SEEDS: CitySeed[] = [
     speechLanguage: "bn-IN",
     group: "india",
     aqiScale: "india",
-    forecastProfile: "generic",
   },
   {
     id: "chennai",
@@ -181,7 +176,6 @@ const SEEDS: CitySeed[] = [
     speechLanguage: "ta-IN",
     group: "india",
     aqiScale: "india",
-    forecastProfile: "generic",
   },
   {
     id: "bengaluru",
@@ -206,7 +200,6 @@ const SEEDS: CitySeed[] = [
     speechLanguage: "kn-IN",
     group: "india",
     aqiScale: "india",
-    forecastProfile: "generic",
   },
   {
     id: "hyderabad",
@@ -231,7 +224,6 @@ const SEEDS: CitySeed[] = [
     speechLanguage: "te-IN",
     group: "india",
     aqiScale: "india",
-    forecastProfile: "generic",
   },
   {
     id: "beijing",
@@ -256,7 +248,6 @@ const SEEDS: CitySeed[] = [
     speechLanguage: "cmn-Hans-CN",
     group: "brics",
     aqiScale: "us",
-    forecastProfile: "generic",
   },
   {
     id: "moscow",
@@ -281,7 +272,6 @@ const SEEDS: CitySeed[] = [
     speechLanguage: "ru-RU",
     group: "brics",
     aqiScale: "us",
-    forecastProfile: "generic",
   },
   {
     id: "pretoria",
@@ -306,7 +296,6 @@ const SEEDS: CitySeed[] = [
     speechLanguage: "en-ZA",
     group: "brics",
     aqiScale: "us",
-    forecastProfile: "generic",
   },
   {
     id: "abu-dhabi",
@@ -331,7 +320,6 @@ const SEEDS: CitySeed[] = [
     speechLanguage: "ar-AE",
     group: "brics",
     aqiScale: "us",
-    forecastProfile: "generic",
   },
   {
     id: "jakarta",
@@ -356,7 +344,6 @@ const SEEDS: CitySeed[] = [
     speechLanguage: "id-ID",
     group: "brics",
     aqiScale: "us",
-    forecastProfile: "generic",
   },
   {
     id: "brasilia",
@@ -381,7 +368,6 @@ const SEEDS: CitySeed[] = [
     speechLanguage: "pt-BR",
     group: "brics",
     aqiScale: "us",
-    forecastProfile: "generic",
   },
 ];
 

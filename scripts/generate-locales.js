@@ -15,13 +15,8 @@
 const fs = require("fs");
 const path = require("path");
 const { GoogleAuth } = require("google-auth-library");
+const { serviceAccountAuthOptions } = require("./serviceAccount");
 
-const CREDENTIALS_PATH = path.join(
-  __dirname,
-  "..",
-  "credentials",
-  "cleanair-clear-streets-b2e96f18917e.json"
-);
 const LOCALES_DIR = path.join(__dirname, "..", "locales");
 const EN_PATH = path.join(LOCALES_DIR, "en.json");
 const BATCH_SIZE = 128;
@@ -58,10 +53,7 @@ function restorePlaceholders(text, placeholders, fallback) {
 }
 
 async function getAccessToken() {
-  const auth = new GoogleAuth({
-    keyFile: CREDENTIALS_PATH,
-    scopes: ["https://www.googleapis.com/auth/cloud-translation"],
-  });
+  const auth = new GoogleAuth(serviceAccountAuthOptions(["https://www.googleapis.com/auth/cloud-translation"]));
   const client = await auth.getClient();
   const resp = await client.getAccessToken();
   return resp.token;

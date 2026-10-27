@@ -75,16 +75,29 @@ async function loadCityPlaces(city: CityConfig): Promise<OsmPlace[]> {
   const storedPlaces = Array.isArray(storedData?.places) ? (storedData.places as OsmPlace[]) : null;
   if (storedPlaces && Date.now() - storedAt < REFRESH_AFTER_MS) return storedPlaces;
 
-  try {
+  const refresh = (async () => {
     const run = queue.then(() => runOverpass(overpassQuery(city)));
     queue = run.catch(() => undefined);
     const places = selectPlaces(city, await run);
     await ref.set({ fetchedAt: adminServerTimestamp(), places, source: "OpenStreetMap via Overpass API" }).catch(() => undefined);
+    memory.set(city.id, { expiresAt: Date.now() + MEMORY_TTL_MS, places });
     return places;
+  })();
+
+  // An older stored copy is still real mapped data: answer with it now and
+  // refresh in the background, since Overpass mirrors can take minutes.
+  if (storedPlaces) {
+    refresh.catch((error) =>
+      console.warn(`OpenStreetMap refresh for ${city.name} failed`, error instanceof Error ? error.message : error),
+    );
+    return storedPlaces;
+  }
+
+  try {
+    return await refresh;
   } catch (error) {
     console.warn(`OpenStreetMap places for ${city.name} unavailable`, error instanceof Error ? error.message : error);
-    // An older stored copy beats nothing; it is still real mapped data.
-    return storedPlaces ?? [];
+    return [];
   }
 }
 

@@ -29,12 +29,13 @@ type ForecastApiResponse = ForecastResult & {
   windApplied?: boolean;
   backtest?: { maeHeuristic: number; maePersistence: number; evaluatedPoints: number; holdoutHours: number } | null;
   arima?: { points: Array<{ time: string; value: number; lower: number; upper: number }> | null; reason?: string };
+  profile?: { diurnal: number[] | null; days: number } | { reason: string };
   error?: string;
 };
 
 type ForecastMeta = Pick<
   ForecastApiResponse,
-  "station" | "isLiveHistory" | "historyAgeHours" | "windApplied" | "dataSource" | "backtest" | "arima"
+  "station" | "isLiveHistory" | "historyAgeHours" | "windApplied" | "dataSource" | "backtest" | "arima" | "profile"
 >;
 
 type GoogleAq = {
@@ -101,7 +102,6 @@ function buildSummary(forecast: ForecastResult, t: Translator, city: CityConfig)
     .replace("{peakValue}", Math.round(forecast.peakPm25).toString())
     .replace("{peakHour}", forecast.peakHour)
     .replace("{trendNote}", trendNote)
-    .replace("{covNote}", forecast.covariateNudge > 3 ? t("forecast_covariate_amplified") : "")
     .replace("{windNote}", forecast.windDamping ? t("forecast_wind_help") : "");
 }
 
@@ -236,6 +236,7 @@ export default function ForecastPage() {
         dataSource,
         backtest,
         arima,
+        profile,
         error: _error,
         ...forecastResult
       } = data;
@@ -246,7 +247,7 @@ export default function ForecastPage() {
         cellId: h3CellId,
         forecast: forecastResult,
         history: apiHistory ?? [],
-        meta: { station, isLiveHistory, historyAgeHours, windApplied, dataSource, backtest, arima },
+        meta: { station, isLiveHistory, historyAgeHours, windApplied, dataSource, backtest, arima, profile },
         error: null,
       });
     } catch (err) {
@@ -317,6 +318,7 @@ export default function ForecastPage() {
         }[liveState];
 
   const backtestBeatsBaseline = meta?.backtest ? meta.backtest.maeHeuristic <= meta.backtest.maePersistence : null;
+  const fittedProfile = meta?.profile && !("reason" in meta.profile) ? meta.profile : null;
   const arimaPeak = meta?.arima?.points?.length ? Math.max(...meta.arima.points.map((point) => point.value)) : null;
 
   return (
@@ -492,12 +494,9 @@ export default function ForecastPage() {
                   </small>
                 </li>
                 <li className="svd-kpi">
-                  <strong>
-                    {forecast.covariateNudge > 0 ? "+" : ""}
-                    {forecast.covariateNudge.toFixed(1)}
-                  </strong>
-                  <span>{t("forecast_metric_covariate")}</span>
-                  <small>{city.forecastProfile === "delhi" ? t("fc_covariate_detail") : t("fc_covariate_off")}</small>
+                  <strong>{fittedProfile?.diurnal ? fittedProfile.days : "—"}</strong>
+                  <span>{t("fc_diurnal_label")}</span>
+                  <small>{fittedProfile?.diurnal ? t("fc_diurnal_detail") : t("fc_diurnal_off")}</small>
                 </li>
                 <li className="svd-kpi">
                   <strong>{history.length}</strong>

@@ -288,7 +288,7 @@ Every integration is optional at runtime: a missing one shows as *not configured
 | Google Air Quality | Independent modelled cross-check, reported in each country's own AQI | `GOOGLE_AIR_QUALITY_API_KEY` | [Enable API](https://console.cloud.google.com/apis/library/airquality.googleapis.com) · [Credentials](https://console.cloud.google.com/apis/credentials) |
 | Places API (New) + Geocoding | Report location search, pin-to-address, and schools / hospitals near a hotspot (server-side via `/api/places`) | `GOOGLE_PLACES_API_KEY` | [Places API (New)](https://console.cloud.google.com/apis/library/places.googleapis.com) · [Geocoding API](https://console.cloud.google.com/apis/library/geocoding-backend.googleapis.com) |
 | Speech-to-Text | Voice notes in the report form | `GOOGLE_SPEECH_API_KEY` | [Enable API](https://console.cloud.google.com/apis/library/speech.googleapis.com) |
-| Cloud Translation | Translating new UI strings (`scripts/generate-locales.js`) | service-account file in `credentials/` | [Enable API](https://console.cloud.google.com/apis/library/translate.googleapis.com) |
+| Cloud Translation | Translating new UI strings (`scripts/generate-locales.js`) | `FIREBASE_SERVICE_ACCOUNT_KEY` | [Enable API](https://console.cloud.google.com/apis/library/translate.googleapis.com) |
 | ImgBB | Photo hosting for reports | `IMGBB_API_KEY` | [api.imgbb.com](https://api.imgbb.com/) |
 | Twilio WhatsApp | Status messages to WhatsApp reporters | `TWILIO_*` | [Twilio console](https://console.twilio.com/) |
 | WhatsApp fix-check | FIXED / STILL replies from the bot | `WHATSAPP_CLOSURE_SECRET` (same value in the app and `whatsapp_bot`) | Any long random string |

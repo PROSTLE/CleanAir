@@ -22,7 +22,7 @@ import {
 } from "@/lib/supportEvidence";
 import { PM10_BREAKPOINTS, PM25_BREAKPOINTS, usAqiToConcentration } from "@/lib/usAqi";
 import { AQI_SCALES, medianStationAqi } from "@/lib/aqiScales";
-import { indiaAqiFromPm, indiaAqiFromReadings } from "@/lib/indiaAqi";
+import { concentrationFromSubIndex, indiaAqiFromPm, indiaAqiFromReadings } from "@/lib/indiaAqi";
 import { selectPlaces } from "@/lib/osmPlacesParse";
 import { concentrationToUsAqi } from "@/lib/usAqi";
 import { applyLatest, openAqPollutant } from "@/lib/openaqParse";
@@ -228,6 +228,17 @@ describe("forecast engine", () => {
     assert.equal(result.historyEnd, "2026-09-25T06:00:00.000Z");
   });
 
+  it("divides a fitted daily cycle out of history and puts it back per hour", () => {
+    const diurnal = Array.from({ length: 24 }, (_, hour) => 1 + 0.3 * Math.cos(((hour - 22) / 24) * 2 * Math.PI));
+    const endMs = Date.parse("2026-09-25T06:00:00Z");
+    const atIndex = (index: number) => getIstHour(new Date(endMs - (47 - index) * 3_600_000));
+    const history = hourlySeries(48, (index) => 100 * diurnal[atIndex(index)], endMs);
+    const result = forecastPM25(history, { anchor: new Date(endMs), profile: { diurnal } });
+    for (const point of result.forecast) {
+      assert.equal(point.predicted_pm25, Math.round(100 * diurnal[getIstHour(new Date(point.time))]));
+    }
+  });
+
   it("backtests against held-out readings and a persistence baseline", () => {
     const result = backtestHeuristic(hourlySeries(60, (index) => 100 + 30 * Math.sin(index / 4)));
     assert.ok(result);
@@ -360,6 +371,18 @@ describe("India National AQI", () => {
     assert.equal(reading?.dominant, "NO₂");
     assert.deepEqual(reading?.pollutants, ["PM2.5", "NO₂"]);
     assert.equal(indiaAqiFromReadings({ co: 1.5 })?.aqi, 75);
+  });
+
+  it("turns CPCB sub-indices back into concentrations", () => {
+    assert.equal(concentrationFromSubIndex("pm25", 100), 60);
+    assert.equal(concentrationFromSubIndex("pm25", 150), 75);
+    assert.equal(concentrationFromSubIndex("co", 49), 0.98);
+    assert.equal(concentrationFromSubIndex("nh3", 5), 20);
+    for (const pm25 of [12, 45, 88, 140, 300]) {
+      assert.equal(indiaAqiFromPm(concentrationFromSubIndex("pm25", indiaAqiFromPm(pm25, null)!.aqi), null)?.aqi, indiaAqiFromPm(pm25, null)?.aqi);
+    }
+    assert.equal(concentrationFromSubIndex("pm10", 501), null);
+    assert.equal(concentrationFromSubIndex("pm10", null), null);
   });
 
   it("uses the median of live stations and ignores stale ones", () => {

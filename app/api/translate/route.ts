@@ -1,19 +1,16 @@
-import { existsSync } from "node:fs";
 import { GoogleAuth } from "google-auth-library";
 import { NextResponse } from "next/server";
-import path from "path";
-
-const CREDENTIALS_PATH = path.join(process.cwd(), "credentials", "cleanair-clear-streets-b2e96f18917e.json");
+import { getServiceAccountKey } from "@/lib/server/serviceAccount";
 
 let auth: GoogleAuth | null = null;
 
 function getAuth() {
   if (!auth) {
-    // Use the local key file when it exists (dev); otherwise fall back to
-    // Application Default Credentials — the runtime service account on
-    // Cloud Run / App Hosting, where the gitignored key file is never present.
+    // The app's one service account (FIREBASE_SERVICE_ACCOUNT_KEY); without
+    // it, Application Default Credentials (the App Hosting runtime account).
+    const key = getServiceAccountKey();
     auth = new GoogleAuth({
-      ...(existsSync(CREDENTIALS_PATH) ? { keyFile: CREDENTIALS_PATH } : {}),
+      ...(key ? { credentials: { client_email: key.client_email, private_key: key.private_key } } : {}),
       scopes: ["https://www.googleapis.com/auth/cloud-translation"],
     });
   }
