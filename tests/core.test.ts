@@ -26,7 +26,8 @@ import { concentrationFromSubIndex, indiaAqiFromPm, indiaAqiFromReadings } from 
 import { selectPlaces } from "@/lib/osmPlacesParse";
 import { concentrationToUsAqi } from "@/lib/usAqi";
 import { applyLatest, openAqPollutant } from "@/lib/openaqParse";
-import { mergeStationFeeds } from "@/lib/stationMerge";
+import { mergeStationFeeds, screenAgainstNeighbours } from "@/lib/stationMerge";
+import type { StationReading } from "@/lib/stations";
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
@@ -473,6 +474,30 @@ describe("station feed merge", () => {
     const merged = mergeStationFeeds([[station("OpenAQ", "2026-06-23T10:00:00Z", true), station("OpenAQ", "2026-09-29T10:00:00Z", false, 73.0)]]);
     assert.equal(merged.length, 2);
     assert.equal(merged[0].pm25, null);
+  });
+});
+
+describe("neighbour screening", () => {
+  const at = (name: string, lat: number, lng: number, pm25: number | null, extra: Partial<StationReading> = {}): StationReading => ({
+    stationName: name, lat, lng, distanceKm: 0, pm25, pm10: null, no2: null, so2: null, co: null, nh3: null, ozone: null,
+    lastUpdated: "2026-10-27T07:30:00Z", aqi: null, dominantPollutant: null, source: "OpenAQ", attribution: null, stale: false, ...extra,
+  });
+  // Mumbai, 27 Oct 2026 07:30 UTC: the AirNow monitor and the MPCB stations 1.6–4.3 km away.
+  const mpcb = [at("Kurla", 19.0863, 72.8888, 47), at("BKC", 19.0657, 72.8628, 60), at("Kherwadi", 19.0614, 72.8459, 49), at("Chembur", 19.0361, 72.8963, 42)];
+
+  it("holds back a lone reading far above every monitor around it", () => {
+    const [screened] = screenAgainstNeighbours([at("Mumbai (AirNow)", 19.07283, 72.88261, 575, { aqi: 500, dominantPollutant: "pm25" }), ...mpcb]);
+    assert.equal(screened.pm25, null);
+    assert.equal(screened.aqi, null);
+    assert.deepEqual(screened.heldBack, [{ pollutant: "pm25", value: 575, neighbourMedian: 48, neighbours: 4 }]);
+  });
+
+  it("keeps real local spikes, clean-air noise and stations without enough neighbours", () => {
+    // R.K. Puram, 7 Oct: 208 beside a median of 51, a recurring real source.
+    assert.equal(screenAgainstNeighbours([at("R.K. Puram", 19.07283, 72.88261, 208), ...mpcb.map((s) => ({ ...s, pm25: 51 }))])[0].pm25, 208);
+    // 12 beside 1 is a big ratio but a trivial gap.
+    assert.equal(screenAgainstNeighbours([at("Clean", 19.07283, 72.88261, 12), ...mpcb.map((s) => ({ ...s, pm25: 1 }))])[0].pm25, 12);
+    assert.equal(screenAgainstNeighbours([at("Lone", 19.07283, 72.88261, 575), ...mpcb.slice(0, 2)])[0].pm25, 575);
   });
 });
 

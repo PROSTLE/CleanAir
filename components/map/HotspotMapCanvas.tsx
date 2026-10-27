@@ -71,6 +71,8 @@ type Station = {
   source: StationFeed;
   attribution: string | null;
   stale: boolean;
+  /** Values withheld as inconsistent with the monitors around the station. */
+  heldBack?: Array<{ pollutant: "pm25" | "pm10"; value: number; neighbourMedian: number; neighbours: number }>;
 };
 
 // Measured values listed in a station pop-up, in this order.
@@ -523,6 +525,13 @@ export default function HotspotMapCanvas({
                   ? t("aqi_gauge_basis_computed").replace("{pollutants}", reading.pollutants.join(", "))
                   : "",
               measured.length ? measured.join(" · ") : t("map3d_no_reading"),
+              ...(station.heldBack ?? []).map((held) =>
+                t("map3d_station_held_back")
+                  .replace("{pollutant}", held.pollutant === "pm25" ? "PM2.5" : "PM10")
+                  .replace("{value}", String(held.value))
+                  .replace("{count}", String(held.neighbours))
+                  .replace("{median}", String(Math.round(held.neighbourMedian))),
+              ),
               `${source}${updated ? ` · ${updated}` : ""}`,
             ].filter(Boolean);
         pannedIdRef.current = null;

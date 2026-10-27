@@ -1,7 +1,7 @@
 // Merging station feeds, kept free of server-only imports so it can be
 // unit-tested (lib/stations.ts does the fetching).
 import { haversineKm } from "@/lib/geo";
-import type { StationReading } from "@/lib/stations";
+import type { HeldBackReading, StationReading } from "@/lib/stations";
 import { parseSensorTimestamp } from "@/lib/supportEvidence";
 
 // Two feeds relaying the same monitor publish coordinates a few metres apart.
@@ -57,4 +57,65 @@ export function mergeStationFeeds(feeds: StationReading[][]): StationReading[] {
           haversineKm(other.lat, other.lng, station.lat, station.lng) <= OFFLINE_SHADOW_KM,
       ),
   );
+}
+
+// A reading far above every monitor around it is a sensor fault, not air: on
+// 27 Oct 2026 Mumbai's AirNow monitor jumped from 83 to 575 µg/m³ PM2.5 while
+// the four MPCB stations 1.6–4.3 km away read 41–60. The thresholds sit well
+// above the widest real disagreement in the Sep–Oct 2026 station history
+// (R.K. Puram, a recurring local source: 4.1× and +157 µg/m³), and hold back
+// none of its 7,089 station-hours.
+const SCREEN_RADIUS_KM = 5;
+const SCREEN_MIN_NEIGHBOURS = 3;
+const SCREEN_MIN_RATIO = 5;
+const SCREEN_MIN_EXCESS = 150;
+const SCREENED: Array<HeldBackReading["pollutant"]> = ["pm25", "pm10"];
+
+function median(values: number[]) {
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = sorted.length >> 1;
+  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+}
+
+/**
+ * Holds back PM values that sit far above the median of the live monitors
+ * around them. The value moves to `heldBack` and the field becomes null, so
+ * nothing downstream uses it; the station stays listed with the reason.
+ */
+export function screenAgainstNeighbours(stations: StationReading[]): StationReading[] {
+  return stations.map((station) => {
+    if (station.stale) return station;
+    const heldBack: HeldBackReading[] = [];
+    for (const pollutant of SCREENED) {
+      const value = station[pollutant];
+      if (value === null) continue;
+      const nearby = stations
+        .filter(
+          (other) =>
+            other !== station &&
+            !other.stale &&
+            other[pollutant] !== null &&
+            haversineKm(other.lat, other.lng, station.lat, station.lng) <= SCREEN_RADIUS_KM,
+        )
+        .map((other) => other[pollutant] as number);
+      if (nearby.length < SCREEN_MIN_NEIGHBOURS) continue;
+      const neighbourMedian = median(nearby);
+      if (value >= SCREEN_MIN_RATIO * neighbourMedian && value - neighbourMedian >= SCREEN_MIN_EXCESS) {
+        heldBack.push({ pollutant, value, neighbourMedian: Number(neighbourMedian.toFixed(1)), neighbours: nearby.length });
+      }
+    }
+    if (heldBack.length === 0) return station;
+    const withheld = new Set<string>(heldBack.map((entry) => entry.pollutant));
+    // A feed's own AQI is built from the same values; drop it when it rests on one withheld.
+    const dominant = station.dominantPollutant?.toLowerCase().replace(/[^a-z0-9]/g, "") ?? null;
+    const aqiTainted = dominant === null || withheld.has(dominant);
+    return {
+      ...station,
+      pm25: withheld.has("pm25") ? null : station.pm25,
+      pm10: withheld.has("pm10") ? null : station.pm10,
+      aqi: aqiTainted ? null : station.aqi,
+      dominantPollutant: aqiTainted ? null : station.dominantPollutant,
+      heldBack,
+    };
+  });
 }

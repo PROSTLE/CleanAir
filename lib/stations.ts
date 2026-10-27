@@ -7,7 +7,7 @@ import { fetchOpenAqStations } from "@/lib/server/openaq";
 import { fetchWaqiStations } from "@/lib/server/waqi";
 import type { StationFeed } from "@/lib/stationFeeds";
 import { adminDb, adminServerTimestamp } from "@/lib/firebaseAdmin";
-import { hasUsablePollutantData, mergeStationFeeds } from "@/lib/stationMerge";
+import { hasUsablePollutantData, mergeStationFeeds, screenAgainstNeighbours } from "@/lib/stationMerge";
 import { isSensorReadingFresh } from "@/lib/supportEvidence";
 
 // One station interface over every public feed: OpenAQ, WAQI and CPCB via
@@ -43,6 +43,20 @@ export type StationReading = {
    * every reading used for evidence, alerts, forecasts and BigQuery.
    */
   stale: boolean;
+  /**
+   * Values withheld because they sit far above every monitor around them
+   * (lib/stationMerge.ts screenAgainstNeighbours). The field itself is null,
+   * so the value never reaches evidence, alerts, forecasts or BigQuery.
+   */
+  heldBack?: HeldBackReading[];
+};
+
+export type HeldBackReading = {
+  pollutant: "pm25" | "pm10";
+  value: number;
+  /** Median of the same pollutant across the live monitors nearby. */
+  neighbourMedian: number;
+  neighbours: number;
 };
 
 type Standards = CityConfig["standards"];
@@ -134,7 +148,8 @@ async function readSnapshot(city: CityConfig): Promise<StationReading[] | null> 
   const data = doc.data();
   const savedAt = data?.savedAt?.toDate?.()?.getTime?.() ?? 0;
   if (!Array.isArray(data?.stations) || Date.now() - savedAt > SNAPSHOT_MAX_AGE_MS) return null;
-  return (data.stations as StationReading[]).map(refreshStale);
+  // Screened again: snapshots saved before screening existed carry raw values.
+  return screenAgainstNeighbours((data.stations as StationReading[]).map(refreshStale));
 }
 
 function refreshLive(city: CityConfig): Promise<StationReading[]> {
@@ -142,7 +157,7 @@ function refreshLive(city: CityConfig): Promise<StationReading[]> {
   if (!pending) {
     pending = (async () => {
       const feeds = await Promise.all(city.stations.sources.map((source) => fetchFeed(city, source)));
-      const stations = mergeStationFeeds(feeds);
+      const stations = screenAgainstNeighbours(mergeStationFeeds(feeds));
       if (stations.length > 0) {
         merged.set(city.id, { expiresAt: Date.now() + MERGED_TTL_MS, stations });
         await saveSnapshot(city, stations);

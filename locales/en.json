@@ -773,6 +773,7 @@
   "fc_meta_source_modelled": "Google modelled history · BigQuery",
   "forecast_chart_subtitle_modelled_tz": "Modelled hours (Google Air Quality API) to the left of Now, projections to the right, in µg/m³ ({tz}).",
   "aqi_gauge_basis_published": "Each station's official AQI across all its pollutants, as WAQI publishes it.",
+  "map3d_station_held_back": "{pollutant} {value} µg/m³ not used: {count} stations within 5 km read a median of {median}, so this is likely a sensor fault.",
   "aqi_gauge_basis_computed": "Computed from the latest {pollutants}.",
   "aqi_gauge_city_median": "Median of {count} live stations.",
   "aqi_gauge_nearest": "Nearest station: {station}.",

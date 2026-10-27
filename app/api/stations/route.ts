@@ -33,6 +33,7 @@ export async function GET(request: Request) {
     source: station.source,
     attribution: station.attribution,
     stale: station.stale,
+    heldBack: station.heldBack ?? [],
   }));
 
   if (stations.length === 0) {
