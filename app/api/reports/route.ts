@@ -16,7 +16,14 @@ import type { IntegrityFlag, ReportIntegrity } from "@/lib/types";
 
 export const runtime = "nodejs";
 
-const HAZARD_IDS = new Set(["garbage-fire", "traffic-smog", "construction-dust", "industrial-emission"]);
+const HAZARD_IDS = new Set([
+  "garbage-fire",
+  "crop-burning",
+  "traffic-smog",
+  "construction-dust",
+  "industrial-emission",
+  "not-sure",
+]);
 const MAX_NOTE_CHARS = 1000;
 const MAX_LABEL_CHARS = 200;
 const PHOTO_MAX_AGE_HOURS = 24;

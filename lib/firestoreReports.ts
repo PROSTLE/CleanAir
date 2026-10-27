@@ -80,7 +80,7 @@ function getHealthRisk(severity: Severity): HealthRisk {
   return "low";
 }
 
-function normalizeSeverity(severity?: Severity | number): Severity {
+export function normalizeSeverity(severity?: Severity | number): Severity {
   if (severity === "critical" || severity === "medium" || severity === "low") {
     return severity;
   }
@@ -128,9 +128,11 @@ export function resolveIncidentHazardType(report: {
   // This works even before Gemini has classified (pending state), preventing
   // all pending reports from incorrectly collapsing to the same fallback type.
   if (report.hazardId === "garbage-fire") return "fire";
+  if (report.hazardId === "crop-burning") return "fire";
   if (report.hazardId === "traffic-smog") return "smog";
   if (report.hazardId === "construction-dust") return "dust";
   if (report.hazardId === "industrial-emission") return "industrial";
+  // "not-sure" deliberately falls through to Gemini's visual type below.
   const lowerId = (report.hazardId || "").toLowerCase();
   if (lowerId.includes("fire")) return "fire";
   if (lowerId.includes("dust")) return "dust";

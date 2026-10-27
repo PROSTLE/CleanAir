@@ -1,0 +1,257 @@
+/* ==========================================================================
+   Federation — transboundary smoke advisories and open data feeds.
+   Builds on the dashboard's svd-* cards; every selector here is fed- prefixed.
+   ========================================================================== */
+
+.fed-map-card {
+  margin-top: 18px;
+}
+
+.fed-map {
+  height: 460px;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--sv-line);
+  background: var(--sv-bg);
+}
+
+.fed-map-failed {
+  display: grid;
+  place-items: center;
+  font-size: 0.83rem;
+  color: var(--sv-muted);
+}
+
+.fed-city-marker {
+  padding: 2px 8px 2px 18px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--sv-ink);
+  white-space: nowrap;
+  background: radial-gradient(circle at 6px 50%, var(--sv-ink) 4px, transparent 5px);
+  text-shadow: 0 0 3px #fff, 0 0 3px #fff;
+}
+
+.fed-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin: 14px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.74rem;
+  color: var(--sv-muted);
+}
+
+.fed-legend li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.fed-legend span {
+  width: 18px;
+  height: 3px;
+  border-radius: 2px;
+}
+
+.fed-level {
+  display: inline-block;
+  padding: 1px 7px;
+  border: 1px solid;
+  border-radius: 999px;
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.fed-cities {
+  display: grid;
+  gap: 14px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.fed-city {
+  padding: 14px 16px;
+  border: 1px solid var(--sv-line);
+  border-radius: 10px;
+  background: #fff;
+  scroll-margin-top: 110px;
+}
+
+.fed-city:target {
+  border-color: var(--sv-green);
+  box-shadow: 0 0 0 3px rgba(63, 168, 86, 0.15);
+}
+
+.fed-city-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.fed-city-head span {
+  font-size: 0.74rem;
+  color: var(--sv-muted);
+}
+
+.fed-city .svd-empty {
+  padding: 8px 0 0;
+}
+
+.fed-city .svd-note {
+  margin-top: 8px;
+}
+
+.fed-advisories {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.fed-advisories li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    "level source eta"
+    "level meta eta";
+  column-gap: 10px;
+  align-items: center;
+  font-size: 0.8rem;
+}
+
+.fed-advisories .fed-level { grid-area: level; }
+.fed-source { grid-area: source; font-weight: 600; }
+.fed-meta { grid-area: meta; font-size: 0.72rem; color: var(--sv-muted); }
+.fed-eta { grid-area: eta; font-variant-numeric: tabular-nums; }
+
+.fed-source em {
+  margin-inline-start: 6px;
+  font-style: normal;
+  font-size: 0.66rem;
+  font-weight: 600;
+  color: var(--sv-green-dark);
+}
+
+.fed-advisories .fed-more {
+  display: block;
+  font-size: 0.72rem;
+  color: var(--sv-muted);
+}
+
+.fed-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+
+.fed-table th,
+.fed-table td {
+  padding: 10px 8px;
+  text-align: start;
+  vertical-align: top;
+  border-bottom: 1px solid var(--sv-line);
+}
+
+.fed-table thead th {
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--sv-muted);
+}
+
+.fed-table tbody th small {
+  display: block;
+  font-weight: 400;
+  font-size: 0.7rem;
+  color: var(--sv-muted);
+}
+
+.fed-table td:nth-child(2) {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+.fed-affects {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.fed-affects li {
+  padding: 2px 8px;
+  border: 1px solid;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+.fed-affects span {
+  color: var(--sv-muted);
+}
+
+.fed-feeds {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 14px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.fed-feeds li {
+  padding: 14px 16px;
+  border: 1px solid var(--sv-line);
+  border-radius: 10px;
+  background: #fff;
+  min-width: 0;
+}
+
+.fed-feeds li > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.84rem;
+}
+
+.fed-format {
+  font-size: 0.66rem;
+  font-weight: 600;
+  color: var(--sv-green-dark);
+  white-space: nowrap;
+}
+
+.fed-feeds p {
+  margin: 6px 0 10px;
+  font-size: 0.74rem;
+  line-height: 1.5;
+  color: var(--sv-muted);
+}
+
+.fed-feeds code {
+  display: block;
+  overflow-wrap: anywhere;
+  font-size: 0.7rem;
+  color: var(--sv-ink);
+}
+
+@media (max-width: 760px) {
+  .fed-map {
+    height: 340px;
+  }
+
+  .fed-table th,
+  .fed-table td {
+    padding: 8px 4px;
+  }
+}

@@ -1,24 +1,33 @@
 // The citizen's hazard selection is context for Gemini and the operator —
 // not a confidence score. Confidence only ever comes from Gemini's
 // classification of the actual photo (see /api/classify-report).
+//
+// Ids are stored on every report, so existing ones keep their id even when
+// the label changes ("traffic-smog" is now shown as smoky vehicles).
 export const hazardTags = [
   {
     id: "garbage-fire",
     label: "hazard_garbage_fire_label",
     description: "hazard_garbage_fire_desc",
-    result: "Likely garbage fire",
+    result: "Likely garbage burning",
+  },
+  {
+    id: "crop-burning",
+    label: "hazard_crop_burning_label",
+    description: "hazard_crop_burning_desc",
+    result: "Likely crop residue burning",
   },
   {
     id: "traffic-smog",
     label: "hazard_traffic_smog_label",
     description: "hazard_traffic_smog_desc",
-    result: "Likely traffic smog trap",
+    result: "Likely vehicle exhaust",
   },
   {
     id: "construction-dust",
     label: "hazard_construction_dust_label",
     description: "hazard_construction_dust_desc",
-    result: "Likely construction dust",
+    result: "Likely construction or road dust",
   },
   {
     id: "industrial-emission",
@@ -26,7 +35,16 @@ export const hazardTags = [
     description: "hazard_industrial_emission_desc",
     result: "Likely industrial emission",
   },
+  {
+    id: "not-sure",
+    label: "hazard_not_sure_label",
+    description: "hazard_not_sure_desc",
+    result: "Source not identified",
+  },
 ];
+
+// Pre-selected so an untouched form doesn't claim a specific source.
+export const defaultHazardId = "not-sure";
 
 // No coordinates until the reporter sets them. A pre-filled point would put
 // every un-located report in the same H3 cell, where three of them would

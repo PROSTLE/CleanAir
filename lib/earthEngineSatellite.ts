@@ -441,62 +441,71 @@ type SampledFeatureCollection = {
   }>;
 };
 
-async function fetchRegionalFireHotspots(city: CityConfig): Promise<FireHotspotResult> {
+/**
+ * FIRMS fire pixels detected in the last 48 h inside [minLng, minLat, maxLng, maxLat].
+ * Throws on Earth Engine errors; callers turn that into their own error state.
+ */
+async function sampleFirmsFires(bounds: readonly [number, number, number, number], maxPoints: number) {
   const end = new Date();
   const start = new Date(end.getTime() - FIRE_WINDOW_HOURS * 60 * 60 * 1000);
-  const windowStart = start.toISOString();
-  const windowEnd = end.toISOString();
-  const computedAt = end.toISOString();
+  await withTimeout(ensureEarthEngineReady(), REQUEST_TIMEOUT_MS, "Earth Engine auth");
+  const [minLng, minLat, maxLng, maxLat] = bounds;
+  const region = ee.Geometry.Rectangle([minLng, minLat, maxLng, maxLat]);
+  // FIRMS images are masked everywhere except fire pixels, so sampling the
+  // max composite returns one feature per detected fire pixel.
+  const composite = ee
+    .ImageCollection(FIRMS_COLLECTION)
+    .filterDate(start.toISOString().slice(0, 10), new Date(end.getTime() + 86_400_000).toISOString().slice(0, 10))
+    .filterBounds(region)
+    .select(["T21", "confidence"])
+    .max();
+  const samples = composite
+    .sample({ region, scale: 1000, geometries: true, dropNulls: true })
+    .limit(maxPoints + 1);
 
+  const collection = await withTimeout(
+    getInfo<SampledFeatureCollection>(samples),
+    FIRE_REQUEST_TIMEOUT_MS,
+    "Earth Engine FIRMS sample",
+  );
+  const fires = (collection.features ?? [])
+    .map((feature) => {
+      const [lng, lat] = feature.geometry?.coordinates ?? [];
+      return {
+        lat: Number(lat),
+        lng: Number(lng),
+        brightnessK: typeof feature.properties?.T21 === "number" ? feature.properties.T21 : null,
+        confidence:
+          typeof feature.properties?.confidence === "number" ? feature.properties.confidence : null,
+      };
+    })
+    .filter((fire) => Number.isFinite(fire.lat) && Number.isFinite(fire.lng));
+
+  return {
+    fires: fires.slice(0, maxPoints),
+    truncated: fires.length > maxPoints,
+    windowStart: start.toISOString(),
+    windowEnd: end.toISOString(),
+  };
+}
+
+async function fetchRegionalFireHotspots(city: CityConfig): Promise<FireHotspotResult> {
+  const computedAt = new Date().toISOString();
   try {
-    await withTimeout(ensureEarthEngineReady(), REQUEST_TIMEOUT_MS, "Earth Engine auth");
-    const [minLng, minLat, maxLng, maxLat] = city.fireRegion.bounds;
-    const region = ee.Geometry.Rectangle([minLng, minLat, maxLng, maxLat]);
-    // FIRMS images are masked everywhere except fire pixels, so sampling the
-    // max composite returns one feature per detected fire pixel.
-    const composite = ee
-      .ImageCollection(FIRMS_COLLECTION)
-      .filterDate(windowStart.slice(0, 10), new Date(end.getTime() + 86_400_000).toISOString().slice(0, 10))
-      .filterBounds(region)
-      .select(["T21", "confidence"])
-      .max();
-    const samples = composite
-      .sample({ region, scale: 1000, geometries: true, dropNulls: true })
-      .limit(MAX_FIRE_POINTS + 1);
-
-    const collection = await withTimeout(
-      getInfo<SampledFeatureCollection>(samples),
-      FIRE_REQUEST_TIMEOUT_MS,
-      "Earth Engine FIRMS sample",
-    );
-    const fires = (collection.features ?? [])
-      .map((feature) => {
-        const [lng, lat] = feature.geometry?.coordinates ?? [];
-        return {
-          lat: Number(lat),
-          lng: Number(lng),
-          brightnessK: typeof feature.properties?.T21 === "number" ? feature.properties.T21 : null,
-          confidence:
-            typeof feature.properties?.confidence === "number" ? feature.properties.confidence : null,
-        };
-      })
-      .filter((fire) => Number.isFinite(fire.lat) && Number.isFinite(fire.lng));
-
+    const sampled = await sampleFirmsFires(city.fireRegion.bounds, MAX_FIRE_POINTS);
     return {
-      fires: fires.slice(0, MAX_FIRE_POINTS),
-      windowStart,
-      windowEnd,
+      ...sampled,
       bounds: city.fireRegion.bounds,
       regionLabel: city.fireRegion.label,
-      truncated: fires.length > MAX_FIRE_POINTS,
       source: "NASA FIRMS via Earth Engine",
       computedAt,
     };
   } catch (error) {
+    const end = new Date();
     return {
       fires: [],
-      windowStart,
-      windowEnd,
+      windowStart: new Date(end.getTime() - FIRE_WINDOW_HOURS * 60 * 60 * 1000).toISOString(),
+      windowEnd: end.toISOString(),
       bounds: city.fireRegion.bounds,
       regionLabel: city.fireRegion.label,
       truncated: false,
@@ -521,6 +530,50 @@ export async function getRegionalFireHotspots(cityId: string, options: { refresh
   const value = await pending;
   // Don't pin an error for an hour; retry on the next request instead.
   if (!value.error) fireCache.set(city.id, { expiresAt: Date.now() + FIRE_CACHE_TTL_MS, value });
+  return value;
+}
+
+// Transboundary advisories look ~400 km out (lib/transboundary.ts), which in
+// stubble season holds thousands of fire pixels, so they get a larger cap.
+const MAX_WIDE_FIRE_POINTS = 5000;
+const wideFireCache = new Map<string, { expiresAt: number; value: WideFireResult }>();
+const wideFireInFlight = new Map<string, Promise<WideFireResult>>();
+
+export type WideFireResult = {
+  fires: FireHotspot[];
+  bounds: readonly [number, number, number, number];
+  truncated: boolean;
+  windowStart: string;
+  windowEnd: string;
+  error?: string;
+};
+
+/** FIRMS fires in an arbitrary box, cached 1 h per box. */
+export async function getFiresInBounds(bounds: readonly [number, number, number, number]): Promise<WideFireResult> {
+  const key = bounds.join(",");
+  const hit = wideFireCache.get(key);
+  if (hit && hit.expiresAt > Date.now()) return hit.value;
+
+  let pending = wideFireInFlight.get(key);
+  if (!pending) {
+    pending = sampleFirmsFires(bounds, MAX_WIDE_FIRE_POINTS)
+      .then((sampled) => ({ ...sampled, bounds }))
+      .catch((error) => {
+        const now = new Date().toISOString();
+        return {
+          fires: [],
+          bounds,
+          truncated: false,
+          windowStart: now,
+          windowEnd: now,
+          error: error instanceof Error ? error.message : "Unknown Earth Engine error.",
+        };
+      })
+      .finally(() => wideFireInFlight.delete(key));
+    wideFireInFlight.set(key, pending);
+  }
+  const value = await pending;
+  if (!value.error) wideFireCache.set(key, { expiresAt: Date.now() + FIRE_CACHE_TTL_MS, value });
   return value;
 }
 

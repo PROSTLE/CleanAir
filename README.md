@@ -17,6 +17,7 @@ Pick a city in the navbar, from two groups: **Indian cities** (New Delhi, Mumbai
 - `/forecast` — 24-hour PM2.5 forecast with model comparison, in every city
 - `/track/<reportId>` — live status of a single report, and the "Is it fixed?" check once it is resolved
 - `/zone/<h3CellId>` — public area page for one ~0.7 km² hexagon (open it from any map pop-up, "View this area →")
+- `/federation` — transboundary smoke advisories between cities and states, and the open data feeds (GeoJSON, CAP 1.2)
 
 > **Operator access for judges:** operator actions (dispatch, resolve, field context, work orders, copilot) require a Firebase Auth account listed in `OPERATOR_EMAILS`. The team shares demo operator credentials privately; they are not published in this repository.
 
@@ -211,6 +212,36 @@ New since the Code for Communities build, all additive: no existing screen, rule
 | `zoneBriefs` | Cached Gemini summaries |
 
 **New fields:** `closure` and `reopenedBy` on incidents and reports; `incidentId` is now read on the track page.
+
+## Federation: smoke across boundaries, open feeds
+
+Each city's hotspots are local, but its smoke often isn't: on peak days in October and November, SAFAR has estimated that crop-residue fires in Punjab and Haryana cause over 40% of Delhi's PM2.5. A city can't act on fires outside its boundary, and the state where they burn rarely knows which cities they reach. `/federation` and `/api/federation/v1` connect the two.
+
+**Transboundary smoke advisories** (`lib/transboundary.ts`, `lib/server/transboundary.ts`):
+
+1. NASA FIRMS fire pixels from the last 48 h within 400 km of each city (Earth Engine), excluding fires inside the city or within 30 km of its centre (those are already handled by local upwind attribution).
+2. Fires are grouped on a 0.5° grid (~55 km, about one district); clusters under 3 pixels are dropped.
+3. A forward trajectory from each cluster on Open-Meteo's hourly forecast wind (120 m where available, else 10 m), interpolated between the city and the 24 largest clusters, in 15-minute steps for up to 48 h. Smoke counts as arriving within 20 km of the city centre plus 8° of plume spread over the distance travelled.
+4. Each arriving cluster becomes an advisory: ETA, fire pixels, distance and a level (severe: 100+ pixels arriving within 24 h; high: 30+ within 36 h; moderate: 10+; watch). The top 8 sources per city are named by OpenStreetMap Nominatim (district, state; the country is appended for fires across a national border).
+5. The same advisories are grouped **by source state**, showing which state's fires are reaching which cities, so the agencies where the burning happens can act on it.
+
+The cron tick recomputes every city hourly and stores the result in Firestore `transboundary/<cityId>`, so every instance serves the same advisories. The dashboard shows an **Incoming smoke** card for the selected city.
+
+This is a screening estimate (one wind level, no plume rise, deposition or chemistry), not a dispersion model, and every page and alert says so.
+
+**Open data API** (read-only, no account, CORS open, 60 requests/min per IP):
+
+| Route | Format | What it holds |
+| --- | --- | --- |
+| `GET /api/federation/v1` | JSON | Discovery: cities covered, their standards, and every feed URL |
+| `GET /api/federation/v1/hotspots?city=` | GeoJSON | Promoted, unresolved hotspots: hazard, evidence tier, severity, status, H3 cell |
+| `GET /api/federation/v1/advisories?city=` | GeoJSON | Transboundary advisories (one LineString trajectory each) plus the source-state summary |
+| `GET /api/federation/v1/cap?city=` | Atom | Index of current alerts, each linking to its CAP document |
+| `GET /api/federation/v1/cap/<identifier>` | CAP 1.2 XML | One alert: a transboundary advisory (`tb-…`) or a hotspot (`vayusetu-inc-…`) |
+
+`city` takes a city id, `india` (the default), `brics` or `all`. Alerts use the OASIS **Common Alerting Protocol 1.2**, the format India's NDMA uses for its national alert system (SACHET), so a state system can ingest them without custom code. Only operational fields are published: no citizen notes, photos, typed addresses or reporter details.
+
+---
 
 ## Security model
 

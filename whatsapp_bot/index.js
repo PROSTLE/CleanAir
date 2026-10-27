@@ -20,17 +20,26 @@ const IMGBB_API_KEY = process.env.IMGBB_API_KEY;
 const APP_URL = (process.env.APP_URL || "https://cleanair-backend--cleanair-clear-streets.asia-southeast1.hosted.app").replace(/\/+$/, "");
 
 const db = admin.firestore();
-const CATEGORY_LABELS = { "1": "garbage_fire", "2": "traffic_smog", "3": "construction_dust", "4": "industrial_emission" };
+const CATEGORY_LABELS = {
+  "1": "garbage_fire",
+  "2": "crop_burning",
+  "3": "traffic_smog",
+  "4": "construction_dust",
+  "5": "industrial_emission",
+  "6": "not_sure",
+};
 
 const H3_RESOLUTION = 8;
 
 // Citizen category is context only; confidence comes from Gemini's
 // classification of the photo in /api/classify-report.
 const HAZARD_MAP = {
-  garbage_fire: { hazardId: "garbage-fire", hazardLabel: "Garbage fire", result: "Likely garbage fire" },
-  traffic_smog: { hazardId: "traffic-smog", hazardLabel: "Traffic smog", result: "Likely traffic smog trap" },
-  construction_dust: { hazardId: "construction-dust", hazardLabel: "Construction dust", result: "Likely construction dust" },
+  garbage_fire: { hazardId: "garbage-fire", hazardLabel: "Garbage fire", result: "Likely garbage burning" },
+  crop_burning: { hazardId: "crop-burning", hazardLabel: "Crop / stubble burning", result: "Likely crop residue burning" },
+  traffic_smog: { hazardId: "traffic-smog", hazardLabel: "Smoky vehicles", result: "Likely vehicle exhaust" },
+  construction_dust: { hazardId: "construction-dust", hazardLabel: "Construction or road dust", result: "Likely construction or road dust" },
   industrial_emission: { hazardId: "industrial-emission", hazardLabel: "Industrial emission", result: "Likely industrial emission" },
+  not_sure: { hazardId: "not-sure", hazardLabel: "Not sure", result: "Source not identified" },
 };
 
 const CIRCLED_NUMBERS = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨", "⑩", "⑪", "⑫", "⑬"];
@@ -118,7 +127,7 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
           reply = `Please reply with a number 1-${LANG_ORDER.length}.\n\n` + buildLangMenu();
           break;
         }
-        reply = TEXT[chosenLang]?.askCategory || "What are you seeing?\n1️⃣ Garbage fire\n2️⃣ Traffic smog\n3️⃣ Construction dust\n4️⃣ Industrial emission\n\nReply with a number (1-4)";
+        reply = TEXT[chosenLang]?.askCategory || "What are you seeing?\n1️⃣ Garbage fire\n2️⃣ Crop / stubble burning\n3️⃣ Smoky vehicles\n4️⃣ Construction or road dust\n5️⃣ Industrial emission\n6️⃣ Not sure\n\nReply with a number (1-6)";
         await sessionRef.set({ step: "awaiting_category", data: { lang: chosenLang } });
         break;
       }
@@ -126,7 +135,7 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
       case "awaiting_category": {
         const category = CATEGORY_LABELS[text];
         if (!category) {
-          reply = t.invalidCategory || "⚠️ Invalid choice. Please reply with a number between 1 and 4.";
+          reply = t.invalidCategory || "⚠️ Invalid choice. Please reply with a number between 1 and 6.";
           break;
         }
         const categoryName = t.categories ? t.categories[category] : category;
@@ -199,7 +208,7 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
       case "awaiting_another_complaint": {
         const answer = text.toLowerCase();
         if (answer.startsWith("y")) {
-          reply = t.askCategory || "What are you seeing?\n1️⃣ Garbage fire\n2️⃣ Traffic smog\n3️⃣ Construction dust\n4️⃣ Industrial emission\n\nReply with a number (1-4)";
+          reply = t.askCategory || "What are you seeing?\n1️⃣ Garbage fire\n2️⃣ Crop / stubble burning\n3️⃣ Smoky vehicles\n4️⃣ Construction or road dust\n5️⃣ Industrial emission\n6️⃣ Not sure\n\nReply with a number (1-6)";
           await sessionRef.set({ step: "awaiting_category", data: { lang: session.data.lang } });
         } else {
           reply = "Thank you! Have a great day. 🌱";
@@ -288,7 +297,7 @@ async function uploadToImgBB(mediaUrl) {
 
 async function saveReport(phone, data, note) {
   try {
-    const hazard = HAZARD_MAP[data.category] || HAZARD_MAP.garbage_fire;
+    const hazard = HAZARD_MAP[data.category] || HAZARD_MAP.not_sure;
     // The conversation only reaches saveReport after a location was shared;
     // refuse rather than pin the report to a made-up Delhi coordinate.
     const lat = Number(data.location?.lat);

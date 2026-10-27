@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { collection, limit, onSnapshot, orderBy, query } from "firebase/firestore";
 import HotspotMap, { type FireMarker } from "@/components/map/HotspotMap";
 import IncidentDrawer, { type DrawerTarget } from "@/components/dashboard/IncidentDrawer";
+import IncomingSmokeCard from "@/components/dashboard/IncomingSmokeCard";
 import ModelQualityCard from "@/components/dashboard/ModelQualityCard";
 import OperatorAuth, { COMMAND_CENTER_ID } from "@/components/dashboard/OperatorAuth";
 import OperatorCopilot from "@/components/dashboard/OperatorCopilot";
@@ -631,6 +632,8 @@ export default function DashboardView() {
             </>
           )}
         </section>
+
+        <IncomingSmokeCard />
 
         <section className="svd-card">
           <header className="svd-card-head">

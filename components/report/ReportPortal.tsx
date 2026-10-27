@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { doc, onSnapshot } from "firebase/firestore";
 import Link from "next/link";
-import { defaultLocation, hazardTags } from "@/components/report/reportData";
+import { defaultHazardId, defaultLocation, hazardTags } from "@/components/report/reportData";
 import ReportLocationPicker from "@/components/report/ReportLocationPicker";
 import Navbar from "@/components/shared/Navbar";
 import { findCity } from "@/lib/cities";
@@ -172,7 +172,7 @@ export default function ReportPortal() {
   const t = useT();
   const { locale } = useLanguage();
   const { city } = useCity();
-  const [selectedTag, setSelectedTag] = useState(hazardTags[0].id);
+  const [selectedTag, setSelectedTag] = useState(defaultHazardId);
   const [anonymous, setAnonymous] = useState(true);
   const [location, setLocation] = useState(defaultLocation);
   const [note, setNote] = useState("");

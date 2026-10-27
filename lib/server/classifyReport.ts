@@ -160,6 +160,7 @@ function getSatelliteHazardChannel(classification: Classification, report: Repor
   if (
     hazardText.includes("dust") ||
     hazardText.includes("fire") ||
+    hazardText.includes("crop") ||
     hazardText.includes("smog") ||
     POLLUTION_CHANNEL_TYPES.has(classification.type)
   ) {

@@ -12,6 +12,7 @@ import {
   startArimaTraining,
 } from "@/lib/server/bigqueryLive";
 import { classifyReport, MAX_CLASSIFICATION_ATTEMPTS } from "@/lib/server/classifyReport";
+import { getAllTransboundaryAdvisories } from "@/lib/server/transboundary";
 import { fetchAllCityStationReadings } from "@/lib/stations";
 
 const PENDING_GRACE_MS = 2 * 60 * 1000;
@@ -130,6 +131,15 @@ export async function runScheduledTick(origin: string) {
         }),
       );
       return Object.fromEntries(perCity);
+    }),
+    step("transboundary", async () => {
+      const perCity = await getAllTransboundaryAdvisories({ refresh: true });
+      return Object.fromEntries(
+        perCity.map((result) => [
+          result.cityId,
+          result.error ? { error: result.error } : { advisories: result.advisories.length, clusters: result.clustersConsidered },
+        ]),
+      );
     }),
   ]);
   // Training reads what ingest just wrote, so it runs after.

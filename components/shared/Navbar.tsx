@@ -20,6 +20,7 @@ export default function Navbar() {
     { href: "/map", label: t("nav_map") },
     { href: "/dashboard", label: t("nav_dashboard") },
     { href: "/forecast", label: t("tabs_forecast") },
+    { href: "/federation", label: t("nav_federation") },
   ];
 
   useEffect(() => {
