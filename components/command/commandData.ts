@@ -19,32 +19,6 @@ const actionKeyByHazard: Record<Incident["hazardType"], string> = {
   particulate: "action_dispatch_inspection",
 };
 
-// Template stat cards. Every value/detail here is a placeholder that
-// CommandCenter.tsx always overwrites with a live-computed figure (or "—"
-// when no live figure is available yet) — see the `stats` useMemo there.
-export const commandStats = [
-  {
-    label: "Active incidents",
-    value: 0,
-    detail: "Across Delhi",
-  },
-  {
-    label: "Critical",
-    value: 0,
-    detail: "Need response now",
-  },
-  {
-    label: "Avg response",
-    value: "—",
-    detail: "Report to dispatch",
-  },
-  {
-    label: "Peak risk",
-    value: "—",
-    detail: "Awaiting forecast",
-  },
-];
-
 export function getRecommendedAction(incident: Incident) {
   return actionByHazard[incident.hazardType];
 }

@@ -6,8 +6,6 @@ import { getAuth } from "firebase-admin/auth";
 import { FieldValue, getFirestore } from "firebase-admin/firestore";
 import { getServiceAccountKey } from "@/lib/server/serviceAccount";
 
-const DEFAULT_FIREBASE_PROJECT_ID = "cleanair-clear-streets";
-
 function getServiceAccountFromEnv(): ServiceAccount | null {
   const key = getServiceAccountKey();
   if (!key) return null;
@@ -30,7 +28,8 @@ function getFirebaseProjectId() {
     return parsedConfig.projectId ?? parsedConfig.project_id;
   }
 
-  return DEFAULT_FIREBASE_PROJECT_ID;
+  // No project named anywhere: let Application Default Credentials say which.
+  return undefined;
 }
 
 const firebaseProjectId = getFirebaseProjectId();

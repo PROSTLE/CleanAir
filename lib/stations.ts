@@ -212,9 +212,9 @@ export async function getNearestStationReading(lat: number, lng: number) {
   return stations.find(hasUsablePollutantData) ?? null;
 }
 
-/** National 24-hour standards for the city covering this point (India's by default). */
-export function standardsForPoint(lat: number, lng: number): Standards {
-  return (resolveCityForPoint(lat, lng) ?? CITIES[0]).standards;
+/** National 24-hour standards for the city covering this point; null outside every monitored city. */
+export function standardsForPoint(lat: number, lng: number): Standards | null {
+  return resolveCityForPoint(lat, lng)?.standards ?? null;
 }
 
 function deltaPct(value: number, reference: number) {

@@ -56,6 +56,21 @@ function subIndex(concentration: number | null | undefined, bands: readonly Band
   return AQI_MAX;
 }
 
+/**
+ * Concentration for a sub-index: the inverse of the band interpolation, in
+ * the band's units (µg/m³, CO in mg/m³). Exact inside a band; at an edge it
+ * returns the shared boundary. Null for anything outside 0–500.
+ */
+export function concentrationFromSubIndex(pollutant: AqiPollutant, index: number | null | undefined): number | null {
+  if (index == null || !Number.isFinite(index) || index < 0 || index > AQI_MAX) return null;
+  for (const [cLow, cHigh, iLow, iHigh] of BANDS[pollutant]) {
+    if (index <= iHigh) {
+      return Number((cLow + ((index - iLow) * (cHigh - cLow)) / (iHigh - iLow)).toFixed(2));
+    }
+  }
+  return null;
+}
+
 /** Category and colours for an index value (0–500). */
 export function aqiInfo(aqi: number): AQIInfo {
   // The index bands end where the PM2.5 bands in getAQIInfo end

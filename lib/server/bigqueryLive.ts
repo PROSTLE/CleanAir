@@ -2,7 +2,7 @@ import "server-only";
 
 import { BigQuery } from "@google-cloud/bigquery";
 import type { StationReading } from "@/lib/stations";
-import type { SensorReading } from "@/lib/forecastEngine";
+import type { ForecastProfile, SensorReading } from "@/lib/forecastEngine";
 import { getH3CellId } from "@/lib/geo";
 import { getServiceAccountKey } from "@/lib/server/serviceAccount";
 import { parseSensorTimestamp } from "@/lib/supportEvidence";
@@ -171,6 +171,88 @@ export async function queryArchiveHistory(h3CellId: string, locationLabel: strin
     params: { h3CellId, locationLabel },
   });
   return rows as SensorReading[];
+}
+
+// ─── Fitted forecast profile ─────────────────────────────────────────────────
+
+export const PROFILE_FIT_DAYS = 30;
+// Below this many station-days the hourly ratios are mostly noise.
+const PROFILE_MIN_DAYS = 7;
+// A station-day counts toward the diurnal profile when most hours reported.
+const PROFILE_MIN_HOURS_PER_DAY = 18;
+
+export type FittedProfile = ForecastProfile & {
+  days: number;
+  stations: number;
+  from: string | null;
+  to: string | null;
+};
+
+/**
+ * The forecast engine's per-city diurnal profile, fitted on the city's last
+ * PROFILE_FIT_DAYS of station history: each local hour's PM2.5 relative to
+ * its station-day mean.
+ */
+export async function fitForecastProfile(
+  bounds: { minLat: number; maxLat: number; minLng: number; maxLng: number },
+  timeZone: string,
+): Promise<FittedProfile> {
+  const [rows] = await getClient().query({
+    query: `
+      WITH hourly AS (
+        SELECT
+          location_label AS station,
+          TIMESTAMP_TRUNC(sampledAt, HOUR) AS ts,
+          AVG(sensor_pm25) AS pm25
+        FROM \`${liveTable()}\`
+        WHERE sampledAt >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL ${PROFILE_FIT_DAYS} DAY)
+          AND location_lat BETWEEN @minLat AND @maxLat
+          AND location_lng BETWEEN @minLng AND @maxLng
+          AND sensor_pm25 IS NOT NULL
+        GROUP BY station, ts
+      ),
+      station_days AS (
+        SELECT station, DATE(ts, @timeZone) AS day, AVG(pm25) AS mean_pm25
+        FROM hourly
+        GROUP BY station, day
+        HAVING COUNT(*) >= ${PROFILE_MIN_HOURS_PER_DAY} AND AVG(pm25) > 0
+      )
+      SELECT
+        ARRAY(
+          SELECT AS STRUCT EXTRACT(HOUR FROM h.ts AT TIME ZONE @timeZone) AS hour, AVG(h.pm25 / d.mean_pm25) AS ratio
+          FROM hourly h
+          JOIN station_days d ON h.station = d.station AND DATE(h.ts, @timeZone) = d.day
+          GROUP BY hour
+          ORDER BY hour
+        ) AS diurnal,
+        (SELECT COUNT(DISTINCT day) FROM station_days) AS days,
+        (SELECT COUNT(DISTINCT station) FROM station_days) AS stations,
+        (SELECT FORMAT_TIMESTAMP('%Y-%m-%dT%H:00:00Z', MIN(ts)) FROM hourly) AS first_hour,
+        (SELECT FORMAT_TIMESTAMP('%Y-%m-%dT%H:00:00Z', MAX(ts)) FROM hourly) AS last_hour`,
+    params: { ...bounds, timeZone },
+  });
+  const row = (rows as Array<{
+    diurnal: Array<{ hour: number; ratio: number }>;
+    days: number;
+    stations: number;
+    first_hour: string | null;
+    last_hour: string | null;
+  }>)[0];
+
+  const days = Number(row?.days ?? 0);
+  const ratios = new Map((row?.diurnal ?? []).map((entry) => [Number(entry.hour), Number(entry.ratio)]));
+  const diurnal =
+    days >= PROFILE_MIN_DAYS && ratios.size === 24
+      ? Array.from({ length: 24 }, (_, hour) => Number((ratios.get(hour) as number).toFixed(3)))
+      : null;
+
+  return {
+    diurnal,
+    days,
+    stations: Number(row?.stations ?? 0),
+    from: row?.first_hour ?? null,
+    to: row?.last_hour ?? null,
+  };
 }
 
 // ─── BigQuery ML ──────────────────────────────────────────────────────────────

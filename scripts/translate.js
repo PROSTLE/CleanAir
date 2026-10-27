@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { GoogleAuth } = require('google-auth-library');
+const { serviceAccountAuthOptions } = require('./serviceAccount');
 
 const localesDir = path.join(__dirname, '..', 'locales');
 const enPath = path.join(localesDir, 'en.json');
@@ -27,10 +28,7 @@ function getPlaceholders(str) {
 async function translate() {
   console.log(`Starting translation for ${keys.length} keys...`);
   
-  const auth = new GoogleAuth({
-    keyFilename: path.join(__dirname, '..', 'credentials', 'cleanair-clear-streets-b2e96f18917e.json'),
-    scopes: ['https://www.googleapis.com/auth/cloud-translation']
-  });
+  const auth = new GoogleAuth(serviceAccountAuthOptions(['https://www.googleapis.com/auth/cloud-translation']));
 
   const client = await auth.getClient();
   const tokenInfo = await client.getAccessToken();

@@ -1,7 +1,7 @@
 import "server-only";
 
 import { cellToLatLng, isValidCell } from "h3-js";
-import { getCity, resolveCityForPoint } from "@/lib/cities";
+import { resolveCityForPoint, type CityConfig } from "@/lib/cities";
 import {
   backtestHeuristic,
   forecastPM25,
@@ -13,10 +13,12 @@ import { fetchNearbyStations } from "@/lib/stations";
 import { getWindData } from "@/lib/weather";
 import {
   arimaForecast,
+  fitForecastProfile,
   isBigQueryConfigured,
   queryArchiveHistory,
   queryLiveHistory,
   type ArimaPoint,
+  type FittedProfile,
 } from "@/lib/server/bigqueryLive";
 import { getModelledHistory, isModelledHistoryConfigured, MODELLED_SOURCE } from "@/lib/server/modelledHistory";
 
@@ -42,12 +44,31 @@ export type ForecastServiceResult =
       windApplied: boolean;
       backtest: BacktestResult | null;
       arima: { points: ArimaPoint[] } | { points: null; reason: string };
+      /** The city's fitted diurnal profile and PM10 slope, or why there is none. */
+      profile: FittedProfile | { reason: string };
     }
   | { ok: false; status: number; error: string; h3CellId: string };
 
+// The fit reads a month of the city's history; it moves slowly, so refit a few times a day.
+const PROFILE_TTL_MS = 6 * 3_600_000;
+const PROFILE_RETRY_MS = 15 * 60 * 1000;
+const profiles = new Map<string, { expiresAt: number; value: Promise<FittedProfile | { reason: string }> }>();
+
+function cityProfile(city: CityConfig) {
+  const hit = profiles.get(city.id);
+  if (hit && hit.expiresAt > Date.now()) return hit.value;
+  const value = fitForecastProfile(city.bounds, city.timeZone).catch((error: unknown) => {
+    profiles.set(city.id, { expiresAt: Date.now() + PROFILE_RETRY_MS, value });
+    return { reason: `Profile fit failed: ${error instanceof Error ? error.message : String(error)}` };
+  });
+  profiles.set(city.id, { expiresAt: Date.now() + PROFILE_TTL_MS, value });
+  return value;
+}
+
 export function resolveForecastCell(h3CellId: string) {
   const [lat, lng] = cellToLatLng(h3CellId);
-  const city = resolveCityForPoint(lat, lng) ?? getCity("delhi");
+  const city = resolveCityForPoint(lat, lng);
+  if (!city) return null;
   const label = `Cell ${h3CellId}`;
   return { city, label, bigQueryLabel: label, lat, lng };
 }
@@ -71,6 +92,9 @@ export async function getForecastForCell(h3CellId: string): Promise<ForecastServ
   }
 
   const cell = resolveForecastCell(h3CellId);
+  if (!cell) {
+    return { ok: false, status: 400, error: "This cell is outside every monitored city.", h3CellId };
+  }
   let history: SensorReading[] = [];
   let dataSource: "live" | "archive" | "modelled" = "archive";
   let station = cell.bigQueryLabel;
@@ -154,7 +178,8 @@ export async function getForecastForCell(h3CellId: string): Promise<ForecastServ
     }
   }
 
-  const engineOptions = { timeZone: cell.city.timeZone, profile: cell.city.forecastProfile };
+  const profile = await cityProfile(cell.city);
+  const engineOptions = { timeZone: cell.city.timeZone, profile: "reason" in profile ? null : profile };
   const forecast = forecastPM25(history, engineOptions);
 
   // BigQuery ML only has a model for stations in the live table.
@@ -192,5 +217,6 @@ export async function getForecastForCell(h3CellId: string): Promise<ForecastServ
     backtest: backtestHeuristic(history, 12, engineOptions),
     cityId: cell.city.id,
     arima,
+    profile,
   };
 }

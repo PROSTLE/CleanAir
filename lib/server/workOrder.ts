@@ -4,7 +4,7 @@ import { adminServerTimestamp } from "@/lib/firebaseAdmin";
 import { resolveIncidentHazardType } from "@/lib/firestoreReports";
 import type { IncidentContext, Target } from "@/lib/server/incidentContext";
 import { generateJson } from "@/lib/server/gemini";
-import { getCity, resolveCityForPoint, type CityConfig } from "@/lib/cities";
+import { resolveCityForPoint, type CityConfig } from "@/lib/cities";
 import type { WorkOrder } from "@/lib/types";
 import { getCachedCellPopulation } from "@/lib/server/cellStats";
 import { getCellRecurrence } from "@/lib/server/incidentEvents";
@@ -121,7 +121,9 @@ export async function generateWorkOrder(
 ): Promise<WorkOrder> {
   const { facts, hazardType } = compactFacts(target, context);
   Object.assign(facts, await areaFacts(target.data.h3CellId));
-  const city = resolveCityForPoint(target.lat, target.lng) ?? getCity("delhi");
+  const city = resolveCityForPoint(target.lat, target.lng);
+  // Routing, standards and language all come from the city; never guess one.
+  if (!city) throw new Error("This hotspot is outside every monitored city, so no authority can be suggested.");
   const department = city.authorities[hazardType];
   const localLanguage = city.localLanguage;
 

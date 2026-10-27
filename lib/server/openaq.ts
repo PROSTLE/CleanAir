@@ -23,12 +23,17 @@ const MIN_REFERENCE_MONITORS = 8;
 // Free keys allow 60 requests a minute; stay under it across every city.
 const REQUESTS_PER_MINUTE = 50;
 const LATEST_CONCURRENCY = 4;
+// A 429 waits for OpenAQ's own reset (X-Ratelimit-Reset, seconds) and retries.
+const RATE_LIMIT_RETRIES = 2;
 
 type ListResponse<T> = { results?: T[] };
 
 const cache = new Map<string, { expiresAt: number; stations: StationReading[] }>();
 const inFlight = new Map<string, Promise<StationReading[]>>();
-const requestTimes: number[] = [];
+// Next.js bundles each route separately, so a module-level array would give
+// every route its own 50-a-minute budget; keep one per process instead.
+const globalBudget = globalThis as typeof globalThis & { __openAqRequestTimes?: number[] };
+const requestTimes = (globalBudget.__openAqRequestTimes ??= []);
 
 function apiKey() {
   return process.env.OPENAQ_API_KEY?.trim() || null;
@@ -56,13 +61,20 @@ async function takeRequestSlot() {
 async function getJson<T>(path: string): Promise<T> {
   const key = apiKey();
   if (!key) throw new Error("OPENAQ_API_KEY is not set.");
-  await takeRequestSlot();
-  const response = await fetch(`${ENDPOINT}${path}`, {
-    headers: { "X-API-Key": key, Accept: "application/json" },
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-  });
-  if (!response.ok) throw new Error(`OpenAQ request failed (${response.status}).`);
-  return (await response.json()) as T;
+  for (let attempt = 0; ; attempt += 1) {
+    await takeRequestSlot();
+    const response = await fetch(`${ENDPOINT}${path}`, {
+      headers: { "X-API-Key": key, Accept: "application/json" },
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+    if (response.status === 429 && attempt < RATE_LIMIT_RETRIES) {
+      const resetSeconds = Number(response.headers.get("x-ratelimit-reset"));
+      await sleep((Number.isFinite(resetSeconds) && resetSeconds > 0 ? resetSeconds : 60) * 1000 + 250);
+      continue;
+    }
+    if (!response.ok) throw new Error(`OpenAQ request failed (${response.status}).`);
+    return (await response.json()) as T;
+  }
 }
 
 function measuresPm(location: OpenAqLocation) {

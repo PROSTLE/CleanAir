@@ -1,13 +1,18 @@
 import "server-only";
 import dns from "node:dns";
+import { concentrationFromSubIndex } from "@/lib/indiaAqi";
 import type { StationReading } from "@/lib/stations";
 import { isSensorReadingFresh } from "@/lib/supportEvidence";
 
 dns.setDefaultResultOrder("ipv4first");
 
+// data.gov.in "Real time Air Quality Index from various locations". Its
+// min/avg/max values are CPCB AQI sub-indices (0–500), not concentrations:
+// CO sits around 30–60 where real CO is ~1 mg/m³, NH3 around 5, and PM10's
+// index often falls below PM2.5's. Each avg is converted back through the
+// CPCB bands, so a station carries µg/m³ (CO mg/m³) like every other feed.
 const CPCB_ENDPOINT =
   "https://api.data.gov.in/resource/3b01bcb8-0b14-4abf-b6f2-c1bfd384ba69";
-const PUBLIC_SAMPLE_KEY = "579b464db66ec23bdd000001";
 const CACHE_TTL_MS = 15 * 60 * 1000;
 const PAGE_LIMIT = 1000;
 const REQUEST_ATTEMPTS = 3;
@@ -56,7 +61,6 @@ let cachedStations:
       stations: GroupedStation[];
     }
   | null = null;
-let warnedAboutSampleKey = false;
 // While data.gov.in is down, answer "no stations" fast instead of retrying
 // the whole national fetch on every request.
 const FAILURE_BACKOFF_MS = 10 * 60 * 1000;
@@ -64,21 +68,10 @@ let failedUntil = 0;
 // Every city reads the same national fetch; concurrent callers share one.
 let inFlight: Promise<GroupedStation[]> | null = null;
 
+// data.gov.in no longer authorises its public sample key, so there is no
+// fallback: without CPCB_API_KEY the feed is simply off.
 function getApiKey() {
-  const configuredKey = process.env.CPCB_API_KEY?.trim();
-  if (configuredKey) return configuredKey;
-
-  if (process.env.NODE_ENV !== "production") {
-    if (!warnedAboutSampleKey) {
-      console.warn(
-        "CPCB_API_KEY is not set; using the data.gov.in public sample key for development.",
-      );
-      warnedAboutSampleKey = true;
-    }
-    return PUBLIC_SAMPLE_KEY;
-  }
-
-  return null;
+  return process.env.CPCB_API_KEY?.trim() || null;
 }
 
 function toNumber(value: string | number | undefined | null) {
@@ -99,8 +92,8 @@ function normalizePollutantId(value?: string): PollutantKey | null {
   return null;
 }
 
-function getPollutantValue(record: CpcbRecord) {
-  return toNumber(record.avg_value ?? record.pollutant_avg);
+function getPollutantValue(record: CpcbRecord, pollutant: PollutantKey) {
+  return concentrationFromSubIndex(pollutant, toNumber(record.avg_value ?? record.pollutant_avg));
 }
 
 function getStationName(record: CpcbRecord) {
@@ -220,7 +213,7 @@ async function loadAllStations() {
     const pollutant = normalizePollutantId(record.pollutant_id);
 
     if (pollutant) {
-      station[pollutant] = getPollutantValue(record);
+      station[pollutant] = getPollutantValue(record, pollutant);
     }
 
     if (record.last_update) station.lastUpdated = record.last_update;

@@ -15,9 +15,10 @@ const IMGBB_API_KEY = process.env.IMGBB_API_KEY;
 
 
 
-// No trailing slash: requests are built as `${APP_URL}/api/...`. The old
-// value ended in "/" and produced "//api/classify-report".
-const APP_URL = (process.env.APP_URL || "https://cleanair-backend--cleanair-clear-streets.asia-southeast1.hosted.app").replace(/\/+$/, "");
+// The deployed web app, e.g. https://<backend>--<project>.<region>.hosted.app.
+// No trailing slash: requests are built as `${APP_URL}/api/...`. Unset, the
+// bot still saves reports and the web app's cron classifies them later.
+const APP_URL = (process.env.APP_URL || "").replace(/\/+$/, "") || null;
 
 const db = admin.firestore();
 const CATEGORY_LABELS = { "1": "garbage_fire", "2": "traffic_smog", "3": "construction_dust", "4": "industrial_emission" };
