@@ -229,6 +229,15 @@ The cron tick recomputes every city hourly and stores the result in Firestore `t
 
 This is a screening estimate (one wind level, no plume rise, deposition or chemistry), not a dispersion model, and every page and alert says so.
 
+**Economic corridors: 48 h outlook** (`lib/corridors.ts`, `lib/server/corridors.ts`). Four corridors, 30 waypoints: Delhi–Mumbai (DMIC), Amritsar–Kolkata (AKIC, across the Indo-Gangetic Plain), Chennai–Bengaluru (CBIC) and Hyderabad–Bengaluru (HBIC). For each waypoint:
+
+1. CAMS PM2.5 / PM10 forecast (Open-Meteo Air Quality, ~40 km), scaled to the live-station median where the waypoint is a monitored city (ratio clamped 0.5–2.5). In Delhi, CAMS typically reads about half of what the stations measure, so this matters.
+2. Risk is the India AQI band of the worst 24-h mean in the next 48 h; "rising" when that is 25% above the current 24-h mean.
+3. "Stagnant air": IMD's ventilation index (10 m wind × boundary-layer height). The best-mixed hour of the next 24 is used, since IMD takes the daily maximum mixing height. Below 6000 m²/s is unfavourable.
+4. "Fire smoke": FIRMS fire clusters whose forward trajectory (the transboundary engine) reaches the waypoint within 36 h.
+
+Segments are coloured by their worse end, on the federation map and in the corridor strips. Recomputed hourly by the cron tick into Firestore `corridors/latest`.
+
 **Open data API** (read-only, no account, CORS open, 60 requests/min per IP):
 
 | Route | Format | What it holds |
@@ -236,6 +245,7 @@ This is a screening estimate (one wind level, no plume rise, deposition or chemi
 | `GET /api/federation/v1` | JSON | Discovery: cities covered, their standards, and every feed URL |
 | `GET /api/federation/v1/hotspots?city=` | GeoJSON | Promoted, unresolved hotspots: hazard, evidence tier, severity, status, H3 cell |
 | `GET /api/federation/v1/advisories?city=` | GeoJSON | Transboundary advisories (one LineString trajectory each) plus the source-state summary |
+| `GET /api/federation/v1/corridors` | JSON | 48-h hourly PM2.5 outlook for every corridor waypoint, with drivers and segment risk |
 | `GET /api/federation/v1/cap?city=` | Atom | Index of current alerts, each linking to its CAP document |
 | `GET /api/federation/v1/cap/<identifier>` | CAP 1.2 XML | One alert: a transboundary advisory (`tb-…`) or a hotspot (`vayusetu-inc-…`) |
 

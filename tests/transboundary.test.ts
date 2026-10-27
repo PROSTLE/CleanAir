@@ -6,6 +6,7 @@ import {
   MIN_CLUSTER_FIRES,
   advisoryLevel,
   buildAdvisories,
+  cityTarget,
   clusterFires,
   sameRegion,
   sourceBounds,
@@ -58,20 +59,20 @@ describe("transboundary clustering", () => {
 
 describe("transboundary trajectory", () => {
   it("carries smoke from Punjab to Delhi on a north-westerly", () => {
-    const trajectory = traceTrajectory(SANGRUR, delhi, uniformField(315, 4));
+    const trajectory = traceTrajectory(SANGRUR, cityTarget(delhi), uniformField(315, 4));
     assert.ok(trajectory.arrivalHours !== null);
     assert.ok(trajectory.arrivalHours > 8 && trajectory.arrivalHours < 24, `eta ${trajectory.arrivalHours}`);
     assert.deepEqual(trajectory.path[0], [SANGRUR.lng, SANGRUR.lat]);
   });
 
   it("does not arrive when the wind blows the other way", () => {
-    const trajectory = traceTrajectory(SANGRUR, delhi, uniformField(135, 4));
+    const trajectory = traceTrajectory(SANGRUR, cityTarget(delhi), uniformField(135, 4));
     assert.equal(trajectory.arrivalHours, null);
     assert.ok(trajectory.closestKm > 200);
   });
 
   it("does not arrive in calm air within the horizon", () => {
-    assert.equal(traceTrajectory(SANGRUR, delhi, uniformField(315, 0.3)).arrivalHours, null);
+    assert.equal(traceTrajectory(SANGRUR, cityTarget(delhi), uniformField(315, 0.3)).arrivalHours, null);
   });
 
   it("interpolates wind between stations", () => {

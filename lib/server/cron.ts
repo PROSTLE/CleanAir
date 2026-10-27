@@ -12,6 +12,7 @@ import {
   startArimaTraining,
 } from "@/lib/server/bigqueryLive";
 import { classifyReport, MAX_CLASSIFICATION_ATTEMPTS } from "@/lib/server/classifyReport";
+import { getCorridorOutlook } from "@/lib/server/corridors";
 import { getAllTransboundaryAdvisories } from "@/lib/server/transboundary";
 import { fetchAllCityStationReadings } from "@/lib/stations";
 
@@ -140,6 +141,12 @@ export async function runScheduledTick(origin: string) {
           result.error ? { error: result.error } : { advisories: result.advisories.length, clusters: result.clustersConsidered },
         ]),
       );
+    }),
+    step("corridors", async () => {
+      const result = await getCorridorOutlook({ refresh: true });
+      return result.error
+        ? { error: result.error }
+        : Object.fromEntries(result.corridors.map((corridor) => [corridor.id, { hotspots: corridor.hotspots, spikes: corridor.spikes }]));
     }),
   ]);
   // Training reads what ingest just wrote, so it runs after.

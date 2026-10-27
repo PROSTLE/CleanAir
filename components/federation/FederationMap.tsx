@@ -5,6 +5,7 @@ import maplibregl, { type GeoJSONSource, type Map as MapLibreMap } from "maplibr
 import "maplibre-gl/dist/maplibre-gl.css";
 import { CITIES } from "@/lib/cities";
 import { useT } from "@/lib/languageContext";
+import type { CorridorFeed } from "@/components/federation/CorridorSection";
 import { LEVEL_COLOR, type AdvisoryFeed } from "@/components/federation/federationData";
 
 const STYLE_URL = "https://tiles.openfreemap.org/styles/positron";
@@ -40,7 +41,32 @@ function toGeoJson(feed: AdvisoryFeed | null, cityIds: Set<string>) {
 }
 
 /** Fire clusters and their estimated smoke trajectories into each receiving city. */
-export default function FederationMap({ feed, group }: { feed: AdvisoryFeed | null; group: "india" | "brics" }) {
+function corridorLines(corridors: CorridorFeed | null) {
+  return {
+    type: "FeatureCollection" as const,
+    features: (corridors?.corridors ?? []).flatMap((corridor) =>
+      corridor.segments.map((segment) => {
+        const from = corridor.waypoints.find((waypoint) => waypoint.id === segment.from)!;
+        const to = corridor.waypoints.find((waypoint) => waypoint.id === segment.to)!;
+        return {
+          type: "Feature" as const,
+          geometry: { type: "LineString" as const, coordinates: [[from.lng, from.lat], [to.lng, to.lat]] },
+          properties: { color: segment.color },
+        };
+      }),
+    ),
+  };
+}
+
+export default function FederationMap({
+  feed,
+  group,
+  corridors = null,
+}: {
+  feed: AdvisoryFeed | null;
+  group: "india" | "brics";
+  corridors?: CorridorFeed | null;
+}) {
   const nodeRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const [ready, setReady] = useState(false);
@@ -69,6 +95,15 @@ export default function FederationMap({ feed, group }: { feed: AdvisoryFeed | nu
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right");
     map.on("load", () => {
       const empty = { type: "FeatureCollection" as const, features: [] };
+      map.addSource("corridors", { type: "geojson", data: empty });
+      // Corridors sit under the smoke paths: wide, translucent, coloured by forecast risk.
+      map.addLayer({
+        id: "corridors",
+        type: "line",
+        source: "corridors",
+        layout: { "line-cap": "round", "line-join": "round" },
+        paint: { "line-color": ["get", "color"], "line-width": 7, "line-opacity": 0.45 },
+      });
       map.addSource("trajectories", { type: "geojson", data: empty });
       map.addSource("fire-sources", { type: "geojson", data: empty });
       map.addLayer({
@@ -111,6 +146,12 @@ export default function FederationMap({ feed, group }: { feed: AdvisoryFeed | nu
     (map.getSource("trajectories") as GeoJSONSource | undefined)?.setData(data.trajectories);
     (map.getSource("fire-sources") as GeoJSONSource | undefined)?.setData(data.sources);
   }, [feed, ready, cities]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready) return;
+    (map.getSource("corridors") as GeoJSONSource | undefined)?.setData(corridorLines(corridors));
+  }, [corridors, ready]);
 
   useEffect(() => {
     const map = mapRef.current;

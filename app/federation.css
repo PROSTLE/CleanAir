@@ -7,6 +7,11 @@
   margin-top: 18px;
 }
 
+/* Four figures here, not the dashboard's six. */
+.fed .svd-kpis {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
 .fed-map {
   height: 460px;
   border-radius: 10px;
@@ -246,6 +251,10 @@
 }
 
 @media (max-width: 760px) {
+  .fed .svd-kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .fed-map {
     height: 340px;
   }
@@ -255,3 +264,163 @@
     padding: 8px 4px;
   }
 }
+
+/* --------------------------------------------------------------------------
+   Economic corridors — 48 h outlook
+   -------------------------------------------------------------------------- */
+
+.corr {
+  min-width: 0;
+}
+
+/* Grid items default to min-width: auto, which let the tile strips push the
+   card wider than the page instead of scrolling inside it. */
+.corr-list {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 22px;
+}
+
+.corr-corridor {
+  min-width: 0;
+}
+
+.corr-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.corr-head h3 {
+  margin: 0;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.corr-head p {
+  margin: 3px 0 0;
+  max-width: 70ch;
+  font-size: 0.74rem;
+  line-height: 1.5;
+  color: var(--sv-muted);
+}
+
+.corr-summary {
+  margin: 0;
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-align: end;
+}
+
+.corr-summary span {
+  display: block;
+  font-weight: 400;
+  font-size: 0.7rem;
+  color: var(--sv-muted);
+}
+
+.corr-strip {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(138px, 1fr);
+  gap: 8px;
+  margin: 0;
+  padding: 0 0 6px;
+  list-style: none;
+  overflow-x: auto;
+  scroll-snap-type: x proximity;
+}
+
+.corr-node {
+  scroll-snap-align: start;
+  padding: 10px 11px 11px;
+  border: 1px solid var(--sv-line);
+  border-top: 4px solid var(--sv-line);
+  border-radius: 8px;
+  background: #fff;
+  min-width: 0;
+}
+
+.corr-node-name strong {
+  display: block;
+  font-size: 0.8rem;
+}
+
+.corr-node-name span {
+  font-size: 0.66rem;
+  color: var(--sv-muted);
+}
+
+.corr-node-value {
+  margin: 8px 0 0;
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.corr-node-value strong {
+  font-size: 1.35rem;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+}
+
+.corr-node-value span,
+.corr-node-level,
+.corr-node-peak,
+.corr-node-basis,
+.corr-node-empty {
+  font-size: 0.66rem;
+  color: var(--sv-muted);
+}
+
+.corr-node-level {
+  margin: 0;
+  font-weight: 600;
+  color: var(--sv-ink);
+}
+
+.corr-spark {
+  display: block;
+  width: 100%;
+  height: 30px;
+  margin: 6px 0 2px;
+}
+
+.corr-spark-limit {
+  stroke: var(--sv-muted);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  vector-effect: non-scaling-stroke;
+  opacity: 0.6;
+}
+
+.corr-node-peak,
+.corr-node-basis,
+.corr-node-empty {
+  margin: 0;
+}
+
+.corr-drivers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 6px 0;
+  padding: 0;
+  list-style: none;
+}
+
+.corr-drivers li {
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 0.62rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.corr-drivers .is-rising { background: #fdecea; color: #b42318; }
+.corr-drivers .is-stagnant { background: #eef1f6; color: #3b4a63; }
+.corr-drivers .is-smoke { background: #fff1e6; color: #c2410c; }

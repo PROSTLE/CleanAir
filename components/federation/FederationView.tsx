@@ -6,6 +6,7 @@ import Icon from "@/components/shared/Icon";
 import LiveIndicator from "@/components/shared/LiveIndicator";
 import { CITIES, formatCityTime, getCity } from "@/lib/cities";
 import { useT } from "@/lib/languageContext";
+import CorridorSection, { type CorridorFeed } from "@/components/federation/CorridorSection";
 import { LEVEL_COLOR, LEVEL_LABEL_KEY, formatEta, type AdvisoryFeed } from "@/components/federation/federationData";
 
 // MapLibre loads after the page shell, as on the public map.
@@ -52,6 +53,29 @@ export default function FederationView() {
     };
   }, [group]);
 
+  const [corridors, setCorridors] = useState<{ feed: CorridorFeed | null; error: string }>({ feed: null, error: "" });
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const response = await fetch(`${FEED_BASE}/corridors`);
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error ?? `HTTP ${response.status}`);
+        if (!cancelled) setCorridors({ feed: body as CorridorFeed, error: "" });
+      } catch (loadError) {
+        const message = loadError instanceof Error ? loadError.message : String(loadError);
+        if (!cancelled) setCorridors((previous) => ({ feed: previous.feed, error: message }));
+      }
+    };
+    load();
+    const timer = setInterval(load, REFRESH_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, []);
+
   const current = state?.group === group ? state : null;
   const feed = current?.feed ?? null;
   const error = current?.error ?? "";
@@ -80,6 +104,7 @@ export default function FederationView() {
     { id: "discovery", href: FEED_BASE, format: "JSON", title: t("fed_feed_discovery"), detail: t("fed_feed_discovery_detail") },
     { id: "hotspots", href: `${FEED_BASE}/hotspots?city=${group}`, format: "GeoJSON", title: t("fed_feed_hotspots"), detail: t("fed_feed_hotspots_detail") },
     { id: "advisories", href: `${FEED_BASE}/advisories?city=${group}`, format: "GeoJSON", title: t("fed_feed_advisories"), detail: t("fed_feed_advisories_detail") },
+    { id: "corridors", href: `${FEED_BASE}/corridors`, format: "JSON", title: t("fed_feed_corridors"), detail: t("fed_feed_corridors_detail") },
     { id: "cap", href: `${FEED_BASE}/cap?city=${group}`, format: "CAP 1.2 · Atom", title: t("fed_feed_cap"), detail: t("fed_feed_cap_detail") },
   ];
 
@@ -139,7 +164,7 @@ export default function FederationView() {
           </h2>
           <p>{t("fed_map_detail")}</p>
         </header>
-        <FederationMap feed={feed} group={group} />
+        <FederationMap feed={feed} group={group} corridors={group === "india" ? corridors.feed : null} />
         <ul className="fed-legend">
           {(["severe", "high", "moderate", "watch"] as const).map((level) => (
             <li key={level}>
@@ -251,6 +276,8 @@ export default function FederationView() {
           )}
           <p className="svd-note">{t("fed_source_note")}</p>
         </section>
+
+        {group === "india" && <CorridorSection feed={corridors.feed} error={corridors.error} />}
 
         <section className="svd-card svd-card-full">
           <header className="svd-card-head">

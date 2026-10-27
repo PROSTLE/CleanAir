@@ -95,12 +95,28 @@ export function sourceBounds(city: CityConfig): [number, number, number, number]
  * local upwind attribution (lib/attribution.ts).
  */
 export function clusterFires(fires: FirePoint[], city: CityConfig): FireCluster[] {
+  return clusterFiresAround(fires, { center: city.center, contains: (lat, lng) => isInCity(city, lat, lng) });
+}
+
+/** A trajectory target: a monitored city, or any point such as a corridor waypoint. */
+export type TransportTarget = {
+  center: { lat: number; lng: number };
+  contains?: (lat: number, lng: number) => boolean;
+};
+
+export function cityTarget(city: CityConfig): TransportTarget {
+  return { center: city.center, contains: (lat, lng) => isInCity(city, lat, lng) };
+}
+
+/** clusterFires for any target: fires 30–400 km from its centre and outside it. */
+export function clusterFiresAround(fires: FirePoint[], target: TransportTarget): FireCluster[] {
+  const { center } = target;
   const groups = new Map<string, { latSum: number; lngSum: number; count: number }>();
   for (const fire of fires) {
     if (!Number.isFinite(fire.lat) || !Number.isFinite(fire.lng)) continue;
-    const distance = haversineKm(city.center.lat, city.center.lng, fire.lat, fire.lng);
+    const distance = haversineKm(center.lat, center.lng, fire.lat, fire.lng);
     if (distance < MIN_SOURCE_DISTANCE_KM || distance > SOURCE_RADIUS_KM) continue;
-    if (isInCity(city, fire.lat, fire.lng)) continue;
+    if (target.contains?.(fire.lat, fire.lng)) continue;
     const key = clusterKey(fire.lat, fire.lng);
     const group = groups.get(key) ?? { latSum: 0, lngSum: 0, count: 0 };
     group.latSum += fire.lat;
@@ -118,7 +134,7 @@ export function clusterFires(fires: FirePoint[], city: CityConfig): FireCluster[
         lat,
         lng,
         fireCount: group.count,
-        distanceKm: Math.round(haversineKm(city.center.lat, city.center.lng, lat, lng)),
+        distanceKm: Math.round(haversineKm(center.lat, center.lng, lat, lng)),
       };
     })
     .sort((a, b) => b.fireCount - a.fireCount);
@@ -151,7 +167,7 @@ export function windAt(field: WindStation[], lat: number, lng: number, hour: num
 /** Forward trajectory from a source on the forecast wind field. */
 export function traceTrajectory(
   start: { lat: number; lng: number },
-  target: CityConfig,
+  target: TransportTarget,
   field: WindStation[],
   maxHours = MAX_TRANSPORT_HOURS,
 ): Trajectory {
@@ -171,7 +187,7 @@ export function traceTrajectory(
       travelledKm += (Math.hypot(wind.u, wind.v) * stepSeconds) / 1000;
       const distance = haversineKm(lat, lng, target.center.lat, target.center.lng);
       closestKm = Math.min(closestKm, distance);
-      if (distance <= ARRIVAL_RADIUS_KM + travelledKm * spread || isInCity(target, lat, lng)) {
+      if (distance <= ARRIVAL_RADIUS_KM + travelledKm * spread || target.contains?.(lat, lng)) {
         path.push([Number(lng.toFixed(4)), Number(lat.toFixed(4))]);
         const hours = hour + (step + 1) / STEPS_PER_HOUR;
         return { arrivalHours: Number(hours.toFixed(2)), closestKm: Math.round(closestKm), path };
@@ -223,7 +239,7 @@ export function buildAdvisories(input: {
   const { city, clusters, field, places, cityState, now } = input;
   const advisories: TransboundaryAdvisory[] = [];
   for (const cluster of clusters) {
-    const trajectory = traceTrajectory(cluster, city, field);
+    const trajectory = traceTrajectory(cluster, cityTarget(city), field);
     if (trajectory.arrivalHours === null) continue;
     const place = places.get(cluster.key) ?? { district: null, state: null, country: null };
     const etaHours = trajectory.arrivalHours;

@@ -21,12 +21,14 @@ export async function GET(request: Request) {
       formats: {
         hotspots: "GeoJSON (RFC 7946)",
         advisories: "GeoJSON (RFC 7946), one LineString trajectory per advisory",
+        corridors: "JSON, 48-h hourly PM2.5 outlook per corridor waypoint",
         alerts: "CAP 1.2 (OASIS), listed in an Atom index",
       },
       cityParam: "A city id, 'india' (default: the six Indian cities), 'brics' or 'all'.",
       feeds: {
         hotspots: `${base}/hotspots?city={city}`,
         advisories: `${base}/advisories?city={city}`,
+        corridors: `${base}/corridors`,
         capIndex: `${base}/cap?city={city}`,
         capAlert: `${base}/cap/{identifier}`,
       },
