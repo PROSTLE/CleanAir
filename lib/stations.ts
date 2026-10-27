@@ -91,7 +91,7 @@ function nearCity(city: CityConfig, station: StationReading) {
   );
 }
 
-async function fetchFeed(city: CityConfig, source: StationSource): Promise<StationReading[]> {
+async function fetchFeed(city: CityConfig, source: StationSource): Promise<StationReading[] | null> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
@@ -103,7 +103,7 @@ async function fetchFeed(city: CityConfig, source: StationSource): Promise<Stati
     ]);
   } catch (error) {
     console.warn(`${FEEDS[source].label} stations for ${city.name} failed`, error instanceof Error ? error.message : error);
-    return [];
+    return null;
   } finally {
     clearTimeout(timer);
   }
@@ -116,9 +116,13 @@ async function fetchFeed(city: CityConfig, source: StationSource): Promise<Stati
 // while it refreshes the feeds in the background. Readings keep their own
 // timestamps, so a snapshot never makes an old reading look live.
 const MERGED_TTL_MS = 10 * 60 * 1000;
+// A list built while a feed was still loading (OpenAQ's rate-limited queue
+// can outlast its budget on a cold server) is kept only briefly and never
+// replaces the stored snapshot, which is served meanwhile.
+const PARTIAL_TTL_MS = 60 * 1000;
 const SNAPSHOT_MAX_AGE_MS = 90 * 60 * 1000;
 const SNAPSHOT_SAVE_INTERVAL_MS = 10 * 60 * 1000;
-const merged = new Map<string, { expiresAt: number; stations: StationReading[] }>();
+const merged = new Map<string, { expiresAt: number; stations: StationReading[]; complete: boolean }>();
 const refreshing = new Map<string, Promise<StationReading[]>>();
 const lastSnapshotSave = new Map<string, number>();
 
@@ -157,10 +161,11 @@ function refreshLive(city: CityConfig): Promise<StationReading[]> {
   if (!pending) {
     pending = (async () => {
       const feeds = await Promise.all(city.stations.sources.map((source) => fetchFeed(city, source)));
-      const stations = screenAgainstNeighbours(mergeStationFeeds(feeds));
+      const complete = feeds.every((feed) => feed !== null);
+      const stations = screenAgainstNeighbours(mergeStationFeeds(feeds.map((feed) => feed ?? [])));
       if (stations.length > 0) {
-        merged.set(city.id, { expiresAt: Date.now() + MERGED_TTL_MS, stations });
-        await saveSnapshot(city, stations);
+        merged.set(city.id, { expiresAt: Date.now() + (complete ? MERGED_TTL_MS : PARTIAL_TTL_MS), stations, complete });
+        if (complete) await saveSnapshot(city, stations);
       }
       return stations;
     })().finally(() => refreshing.delete(city.id));
@@ -171,7 +176,10 @@ function refreshLive(city: CityConfig): Promise<StationReading[]> {
 
 async function fetchNetworkStations(city: CityConfig, options: FetchOptions = {}): Promise<StationReading[]> {
   const hit = merged.get(city.id);
-  if (hit && hit.expiresAt > Date.now() && !options.preferLive) return hit.stations;
+  if (hit && hit.expiresAt > Date.now() && !options.preferLive) {
+    if (hit.complete) return hit.stations;
+    return (await readSnapshot(city).catch(() => null)) ?? hit.stations;
+  }
   const live = refreshLive(city);
   if (!options.preferLive) {
     const snapshot = await readSnapshot(city).catch(() => null);

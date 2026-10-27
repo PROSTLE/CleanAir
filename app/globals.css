@@ -526,41 +526,6 @@ a {
   height: 100%;
 }
 
-.hotspot-marker {
-  display: block;
-  padding: 0;
-  border: 0;
-  background: none;
-  line-height: 0;
-  cursor: pointer;
-}
-
-.hotspot-marker svg {
-  display: block;
-}
-
-.hotspot-marker:focus-visible {
-  outline: 2px solid var(--teal);
-  outline-offset: 2px;
-}
-
-/* Brief bounce when a hotspot is selected (was Google's BOUNCE animation). */
-.hotspot-marker.is-bouncing svg {
-  animation: hotspot-bounce 0.35s ease-in-out 2;
-}
-
-@keyframes hotspot-bounce {
-  50% {
-    transform: translateY(-8px);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .hotspot-marker.is-bouncing svg {
-    animation: none;
-  }
-}
-
 .hotspot-map-state {
   position: absolute;
   inset: 0;
@@ -675,10 +640,10 @@ a {
   background: linear-gradient(90deg, #3a9d5d, #d4a72c, #d9772b);
 }
 
+/* Matches the hotspot ring drawn on the map (HotspotMapCanvas). */
 .map3d-key.is-signal {
-  border: 2px solid #fff;
-  background: var(--ink);
-  box-shadow: 0 0 0 1px var(--line-strong);
+  border: 2px solid var(--ink);
+  background: color-mix(in srgb, var(--ink) 30%, transparent);
 }
 
 .map3d-key.is-area {

@@ -28,6 +28,15 @@ const PITCH_3D = 55;
 const BEARING_3D = -12;
 const MIN_3D_ZOOM = 14.2;
 
+// Hotspots are drawn in the map canvas, not as DOM markers: nearby ones merge
+// into one count bubble until this zoom, and the ground stations (DOM markers,
+// always on top of the canvas) are never covered.
+const HOTSPOT_CLUSTER_MAX_ZOOM = 15;
+const HOTSPOT_CLUSTER_RADIUS_PX = 34;
+const HOTSPOT_FONT = ["Noto Sans Bold"];
+// Severity rank → colour for a merged bubble (0 = unverified, 3 = critical).
+const CLUSTER_COLORS = ["#94a3b8", "#16a34a", "#d97706", "#dc2626"];
+
 /** NASA FIRMS active-fire pixel (from /api/fires). */
 export type FireMarker = { lat: number; lng: number; brightnessK: number | null };
 
@@ -36,12 +45,10 @@ export type MapPoint = {
   lat: number;
   lng: number;
   title: string;
-  /** Marker markup (an inline SVG built by the caller from trusted values). */
-  html: string;
-  anchor: "bottom" | "center";
+  /** The hotspot's ground dot: fill colour, a short label (count or "!"), severity rank 0–3. */
+  marker: { color: string; label: string; rank: number; pending: boolean };
   /** Pixels above the coordinate where the pop-up tip sits. */
   popupOffset: number;
-  zIndex: number;
   circle: { radiusM: number; color: string; fillOpacity: number; strokeOpacity: number };
 };
 
@@ -138,9 +145,9 @@ export default function HotspotMapCanvas({
   const nodeRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const popupRef = useRef<Popup | null>(null);
-  const markerElements = useRef<Record<string, HTMLElement>>({});
   const pannedIdRef = useRef<string | null>(null);
   const onStatusChangeRef = useRef(onStatusChange);
+  const onSelectRef = useRef(onSelect);
   const [ready, setReady] = useState(false);
   const [failed, setFailed] = useState(false);
   const [stations, setStations] = useState<Station[] | null>(null);
@@ -150,6 +157,10 @@ export default function HotspotMapCanvas({
   useEffect(() => {
     onStatusChangeRef.current = onStatusChange;
   }, [onStatusChange]);
+
+  useEffect(() => {
+    onSelectRef.current = onSelect;
+  }, [onSelect]);
 
   useEffect(() => {
     if (!showContext) return;
@@ -313,14 +324,15 @@ export default function HotspotMapCanvas({
         );
       }
 
-      // Hotspot radius circles, same sizes and colours as the old Google map.
+      // Hotspot radius circles. They fade in from street level, where they
+      // are readable; at city zoom they only piled up into grey blots.
       map.addSource("hotspot-circles", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
       map.addLayer(
         {
           id: "hotspot-circles-fill",
           type: "fill",
           source: "hotspot-circles",
-          paint: { "fill-color": ["get", "color"], "fill-opacity": ["get", "fillOpacity"] },
+          paint: { "fill-color": ["get", "color"], "fill-opacity": ["interpolate", ["linear"], ["zoom"], 12, 0, 14, ["get", "fillOpacity"]] },
         },
         "buildings-3d",
       );
@@ -329,7 +341,11 @@ export default function HotspotMapCanvas({
           id: "hotspot-circles-line",
           type: "line",
           source: "hotspot-circles",
-          paint: { "line-color": ["get", "color"], "line-opacity": ["get", "strokeOpacity"], "line-width": 1 },
+          paint: {
+            "line-color": ["get", "color"],
+            "line-opacity": ["interpolate", ["linear"], ["zoom"], 12, 0, 14, ["get", "strokeOpacity"]],
+            "line-width": 1,
+          },
         },
         "buildings-3d",
       );
@@ -348,6 +364,105 @@ export default function HotspotMapCanvas({
           "circle-stroke-width": 1.5,
         },
       });
+
+      // Hotspots: a small ground dot each, merged into a count bubble when they crowd.
+      map.addSource("hotspots", {
+        type: "geojson",
+        data: { type: "FeatureCollection", features: [] },
+        cluster: true,
+        clusterMaxZoom: HOTSPOT_CLUSTER_MAX_ZOOM,
+        clusterRadius: HOTSPOT_CLUSTER_RADIUS_PX,
+        clusterProperties: { maxRank: ["max", ["get", "rank"]] },
+      });
+      map.addLayer({
+        id: "hotspot-clusters",
+        type: "circle",
+        source: "hotspots",
+        filter: ["has", "point_count"],
+        paint: {
+          "circle-color": ["match", ["get", "maxRank"], 3, CLUSTER_COLORS[3], 2, CLUSTER_COLORS[2], 1, CLUSTER_COLORS[1], CLUSTER_COLORS[0]],
+          "circle-radius": ["step", ["get", "point_count"], 12, 5, 15, 15, 18],
+          "circle-stroke-color": "#ffffff",
+          "circle-stroke-width": 2.5,
+          "circle-opacity": 0.92,
+        },
+      });
+      map.addLayer({
+        id: "hotspot-cluster-count",
+        type: "symbol",
+        source: "hotspots",
+        filter: ["has", "point_count"],
+        layout: {
+          "text-field": ["get", "point_count_abbreviated"],
+          "text-font": HOTSPOT_FONT,
+          "text-size": 11,
+          "text-allow-overlap": true,
+          "text-ignore-placement": true,
+        },
+        paint: { "text-color": "#ffffff" },
+      });
+      map.addLayer({
+        id: "hotspot-selected",
+        type: "circle",
+        source: "hotspots",
+        filter: ["==", ["get", "id"], ""],
+        paint: {
+          "circle-radius": 16,
+          "circle-color": "rgba(0,0,0,0)",
+          "circle-stroke-color": ["get", "color"],
+          "circle-stroke-width": 2.5,
+        },
+      });
+      map.addLayer({
+        id: "hotspot-points",
+        type: "circle",
+        source: "hotspots",
+        filter: ["!", ["has", "point_count"]],
+        // A tinted ring rather than a solid dot: most ambient hotspots sit on
+        // the station that detected them, whose stem then lands in the middle.
+        paint: {
+          "circle-color": ["get", "color"],
+          "circle-opacity": ["case", ["get", "pending"], 0.15, 0.3],
+          "circle-radius": 10.5,
+          "circle-stroke-color": ["case", ["get", "pending"], "#64748b", ["get", "color"]],
+          "circle-stroke-width": 2.5,
+        },
+      });
+      map.addLayer({
+        id: "hotspot-labels",
+        type: "symbol",
+        source: "hotspots",
+        filter: ["all", ["!", ["has", "point_count"]], ["!=", ["get", "label"], ""]],
+        layout: {
+          "text-field": ["get", "label"],
+          "text-font": HOTSPOT_FONT,
+          "text-size": 10,
+          "text-allow-overlap": true,
+          "text-ignore-placement": true,
+        },
+        paint: {
+          "text-color": ["case", ["get", "pending"], "#334155", ["get", "color"]],
+          "text-halo-color": "#ffffff",
+          "text-halo-width": 1.5,
+        },
+      });
+
+      map.on("click", "hotspot-points", (event) => {
+        const id = event.features?.[0]?.properties?.id;
+        if (typeof id === "string") onSelectRef.current(id);
+      });
+      // A bubble zooms in until its hotspots separate.
+      map.on("click", "hotspot-clusters", async (event) => {
+        const feature = event.features?.[0];
+        const clusterId = feature?.properties?.cluster_id;
+        if (!feature || feature.geometry.type !== "Point" || typeof clusterId !== "number") return;
+        const zoom = await (map.getSource("hotspots") as GeoJSONSource).getClusterExpansionZoom(clusterId);
+        map.easeTo({ center: feature.geometry.coordinates as [number, number], zoom });
+      });
+      for (const layer of ["hotspot-points", "hotspot-clusters"]) {
+        map.on("mouseenter", layer, () => (map.getCanvas().style.cursor = "pointer"));
+        map.on("mouseleave", layer, () => (map.getCanvas().style.cursor = ""));
+      }
 
       map.setSky({
         "sky-color": "#e8efe9",
@@ -437,24 +552,26 @@ export default function HotspotMapCanvas({
   useEffect(() => {
     const map = mapRef.current;
     if (!ready || !map) return;
-    markerElements.current = {};
-    const markers: Marker[] = points.map((point) => {
-      const element = document.createElement("button");
-      element.type = "button";
-      element.className = "hotspot-marker";
-      element.title = point.title;
-      element.setAttribute("aria-label", point.title);
-      element.innerHTML = point.html;
-      element.style.zIndex = String(point.zIndex);
-      element.addEventListener("click", (event) => {
-        event.stopPropagation();
-        onSelect(point.id);
-      });
-      markerElements.current[point.id] = element;
-      return new maplibregl.Marker({ element, anchor: point.anchor }).setLngLat([point.lng, point.lat]).addTo(map);
+    (map.getSource("hotspots") as GeoJSONSource | undefined)?.setData({
+      type: "FeatureCollection",
+      features: points.map((point) => ({
+        type: "Feature",
+        properties: { id: point.id, title: point.title, ...point.marker },
+        geometry: { type: "Point", coordinates: [point.lng, point.lat] },
+      })),
     });
-    return () => markers.forEach((marker) => marker.remove());
-  }, [onSelect, points, ready]);
+  }, [points, ready]);
+
+  // Ring the selected hotspot's dot.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!ready || !map) return;
+    map.setFilter("hotspot-selected", [
+      "all",
+      ["!", ["has", "point_count"]],
+      ["==", ["get", "id"], selection?.id ?? ""],
+    ]);
+  }, [ready, selection?.id]);
 
   // Open the selected hotspot's pop-up; pan only when the selection itself changes.
   useEffect(() => {
@@ -474,13 +591,12 @@ export default function HotspotMapCanvas({
     if (pannedIdRef.current === selection.id) return;
     pannedIdRef.current = selection.id;
     const center: [number, number] = [selection.lng, selection.lat];
-    if (map.getPitch() > 0) map.flyTo({ center, zoom: Math.max(map.getZoom(), 15) });
-    else map.easeTo({ center });
-    const element = markerElements.current[selection.id];
-    if (element) {
-      element.classList.add("is-bouncing");
-      window.setTimeout(() => element.classList.remove("is-bouncing"), 700);
-    }
+    // A hotspot picked from the list may sit inside a bubble: zoom until it is its own dot.
+    const shownAlone = map
+      .queryRenderedFeatures({ layers: ["hotspot-points"] })
+      .some((feature) => feature.properties?.id === selection.id);
+    const minZoom = map.getPitch() > 0 ? 15 : shownAlone ? 0 : HOTSPOT_CLUSTER_MAX_ZOOM + 1;
+    map.easeTo({ center, zoom: Math.max(map.getZoom(), minZoom) });
   }, [ready, selection]);
 
   // Ground stations: a pole rising from the exact published coordinate.

@@ -139,29 +139,22 @@ const hazardColor: Record<string, string> = {
   particulate: "#eab308", // Amber — visually distinct from all 4 confirmed types
 };
 
-// Pixels from the coordinate to the top of a pin, where its pop-up points.
-const PIN_POPUP_OFFSET = 44;
+// Pixels from the coordinate to the edge of a hotspot dot, where its pop-up points.
+const DOT_POPUP_OFFSET = 12;
 
-function markerGraphic(cluster: MapCluster, mode: "public" | "operations") {
+// Severity order for the map: a cluster of hotspots takes its most severe member's colour.
+const severityRank: Record<Severity, number> = { low: 1, medium: 2, critical: 3 };
+
+/** How a hotspot is drawn: a small ground dot (see HotspotMapCanvas), never a tall pin. */
+function markerStyle(cluster: MapCluster, mode: "public" | "operations"): MapPoint["marker"] {
   const isPromoted = !!cluster.promotedIncident;
   const primaryIncident = cluster.promotedIncident ?? cluster.incidents[0];
   const isPending = primaryIncident.status === "pending" || primaryIncident.status === "classification_failed";
   const evidenceSummary = getEvidenceSourceSummary(primaryIncident);
 
   if ((!isPromoted || isPending) && mode === "operations") {
-    const hasMultiple = cluster.incidents.length > 1;
-    const r = hasMultiple ? 14 : 8;
-    const size = hasMultiple ? 28 : 16;
-    return {
-      anchor: "center" as const,
-      popupOffset: size / 2,
-      html: `
-        <svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <circle cx="${size/2}" cy="${size/2}" r="${r - 1}" fill="#94a3b8" stroke="#475569" stroke-width="1.5" stroke-dasharray="2 2" fill-opacity="0.3"/>
-          ${hasMultiple ? `<text x="${size/2}" y="${size/2 + 3.5}" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" font-weight="800" fill="#334155">${cluster.incidents.length}</text>` : `<circle cx="${size/2}" cy="${size/2}" r="3" fill="#64748b"/>`}
-        </svg>
-      `,
-    };
+    const label = cluster.incidents.length > 1 ? String(cluster.incidents.length) : "";
+    return { color: "#94a3b8", label, rank: 0, pending: true };
   }
 
   const color = mode === "public" ? (hazardColor[primaryIncident.hazardType] || severityColor[primaryIncident.severity]) : severityColor[primaryIncident.severity];
@@ -175,21 +168,9 @@ function markerGraphic(cluster: MapCluster, mode: "public" | "operations") {
     label = String(evidenceSummary.count);
   } else if (primaryIncident.severity === "critical") {
     label = "!";
-  } else if (primaryIncident.severity === "medium") {
-    label = "•";
   }
 
-  return {
-    anchor: "bottom" as const,
-    popupOffset: PIN_POPUP_OFFSET,
-    html: `
-      <svg width="38" height="46" viewBox="0 0 38 46" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <path d="M19 45C19 45 35 29.8 35 17.8C35 8.5 27.8 1 19 1C10.2 1 3 8.5 3 17.8C3 29.8 19 45 19 45Z" fill="${color}" stroke="white" stroke-width="3" />
-        <circle cx="19" cy="18" r="8" fill="white" fill-opacity="0.96"/>
-        <text x="19" y="22" text-anchor="middle" font-family="Arial, sans-serif" font-size="14" font-weight="800" fill="${color}">${label}</text>
-      </svg>
-    `,
-  };
+  return { color, label, rank: severityRank[primaryIncident.severity] ?? 1, pending: false };
 }
 
 export default function HotspotMap({
@@ -373,7 +354,7 @@ export default function HotspotMap({
 
   const mapPoints = useMemo<MapPoint[]>(
     () =>
-      clusters.map((cluster, clusterIndex) => {
+      clusters.map((cluster) => {
         const primaryIncident = cluster.promotedIncident ?? cluster.incidents[0];
         const isPending = primaryIncident.status === "pending" || primaryIncident.status === "classification_failed";
         const isPromoted = !!cluster.promotedIncident;
@@ -381,17 +362,14 @@ export default function HotspotMap({
           ? (hazardColor[primaryIncident.hazardType] ?? severityColor[primaryIncident.severity])
           : (!isPromoted || isPending ? "#667085" : severityColor[primaryIncident.severity]);
         const hasAlert = !!primaryIncident.evidence?.alertTier;
-        const graphic = markerGraphic(cluster, mode);
 
         return {
           id: primaryIncident.id,
           lat: cluster.latitude,
           lng: cluster.longitude,
           title: `${primaryIncident.neighborhood} — ${primaryIncident.hazardType}`,
-          html: graphic.html,
-          anchor: graphic.anchor,
-          popupOffset: graphic.popupOffset,
-          zIndex: 10 + clusterIndex,
+          marker: markerStyle(cluster, mode),
+          popupOffset: DOT_POPUP_OFFSET,
           circle: {
             radiusM: hasAlert ? severityRadius[primaryIncident.severity] : 450,
             color: circleColor,
